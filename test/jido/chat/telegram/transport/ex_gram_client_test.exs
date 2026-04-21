@@ -61,7 +61,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
     @behaviour ExGram.Adapter
 
     @impl true
-    def request(verb, path, body) do
+    def request(verb, path, body, _opts) do
       send(self(), {:http_request, verb, path, body})
       {:ok, true}
     end

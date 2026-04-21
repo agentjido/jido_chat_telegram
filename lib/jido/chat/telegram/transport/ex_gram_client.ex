@@ -68,7 +68,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     params = atomize_payload(payload)
     adapter = ex_gram_http_adapter(opts)
 
-    adapter.request(:post, build_path(token, "sendMessageDraft"), params)
+    request_adapter(adapter, :post, build_path(token, "sendMessageDraft"), params, adapter_request_opts(opts))
   end
 
   def call(token, "deleteMessage", payload, opts) do
@@ -235,6 +235,21 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
   defp ex_gram_http_adapter(opts) do
     ex_gram_adapter(opts)
   end
+
+  defp request_adapter(adapter, verb, path, body, opts) do
+    cond do
+      Code.ensure_loaded?(adapter) and function_exported?(adapter, :request, 4) ->
+        adapter.request(verb, path, body, opts)
+
+      Code.ensure_loaded?(adapter) and function_exported?(adapter, :request, 3) ->
+        adapter.request(verb, path, body)
+
+      true ->
+        {:error, :unsupported_adapter}
+    end
+  end
+
+  defp adapter_request_opts(opts), do: Keyword.take(opts, [:debug, :check_params])
 
   defp build_path(token, name) do
     token_part = "/bot#{token}"
