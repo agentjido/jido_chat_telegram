@@ -229,15 +229,11 @@ defmodule Jido.Chat.Telegram.Extensions do
           result
           |> map_get([:document, "document"])
           |> map_get([:file_id, "file_id"])
-
-        _ ->
-          nil
       end
 
     MediaMessage.new(%{
       kind: kind,
-      message_id:
-        to_string(map_get(result, [:message_id, "message_id"]) || Jido.Chat.ID.generate!()),
+      message_id: to_string(map_get(result, [:message_id, "message_id"]) || Jido.Chat.ID.generate!()),
       chat_id: map_get(result, [:chat, "chat"]) |> map_get([:id, "id"]) || chat_id,
       date: map_get(result, [:date, "date"]),
       caption: map_get(result, [:caption, "caption"]),

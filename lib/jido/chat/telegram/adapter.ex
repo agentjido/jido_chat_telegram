@@ -389,8 +389,7 @@ defmodule Jido.Chat.Telegram.Adapter do
              ) do
         {:ok,
          %{
-           external_thread_id:
-             stringify(map_get(result, [:message_thread_id, "message_thread_id"])),
+           external_thread_id: stringify(map_get(result, [:message_thread_id, "message_thread_id"])),
            delivery_external_room_id: stringify(chat_id)
          }}
       end
@@ -492,8 +491,6 @@ defmodule Jido.Chat.Telegram.Adapter do
       {:ok, updated_chat, incoming}
     end
   end
-
-  defp route_parsed_event(_chat, _other, _opts), do: {:error, :unsupported_update_type}
 
   defp incoming_from_event(%EventEnvelope{event_type: :message, payload: %Incoming{} = incoming}),
     do: {:ok, incoming}
@@ -626,7 +623,7 @@ defmodule Jido.Chat.Telegram.Adapter do
   defp upload_input(_upload), do: {:error, :missing_file_source}
 
   defp upload_caption(%FileUpload{} = upload) do
-    metadata = upload.metadata || %{}
+    metadata = upload.metadata
 
     metadata[:caption] || metadata["caption"] || metadata[:alt_text] || metadata["alt_text"] ||
       metadata[:transcript] || metadata["transcript"]
@@ -699,10 +696,7 @@ defmodule Jido.Chat.Telegram.Adapter do
         adapter_name: :telegram,
         thread_id: thread_id,
         message_id: message_id,
-        action_id:
-          stringify(
-            map_get(callback_query, [:data, "data"]) || map_get(callback_query, [:id, "id"])
-          ),
+        action_id: stringify(map_get(callback_query, [:data, "data"]) || map_get(callback_query, [:id, "id"])),
         value: map_get(callback_query, [:data, "data"]),
         user: %{
           user_id: stringify(map_get(from, [:id, "id"]) || "unknown"),
@@ -809,7 +803,7 @@ defmodule Jido.Chat.Telegram.Adapter do
   defp parse_slash_command(text) when is_binary(text) do
     case Regex.run(~r/^\/(\w+)(?:@\w+)?(?:\s+(.*))?$/, text) do
       [_, command] -> {"/" <> command, ""}
-      [_, command, arguments] -> {"/" <> command, String.trim(arguments || "")}
+      [_, command, arguments] -> {"/" <> command, String.trim(arguments)}
       _ -> nil
     end
   end

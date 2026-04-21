@@ -36,8 +36,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
   end
 
   if @run_live and (is_nil(@token) or @token == "" or is_nil(@chat_id) or @chat_id == "") do
-    @moduletag skip:
-                 "set TELEGRAM_BOT_TOKEN and TELEGRAM_TEST_CHAT_ID when RUN_LIVE_TELEGRAM_TESTS=true"
+    @moduletag skip: "set TELEGRAM_BOT_TOKEN and TELEGRAM_TEST_CHAT_ID when RUN_LIVE_TELEGRAM_TESTS=true"
   end
 
   setup_all do

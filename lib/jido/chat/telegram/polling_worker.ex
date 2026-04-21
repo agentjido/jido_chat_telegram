@@ -80,8 +80,7 @@ defmodule Jido.Chat.Telegram.PollingWorker do
             {:noreply,
              %{
                next_state
-               | backoff_ms:
-                   min(max(delay * 2, next_state.poll_interval_ms), next_state.max_backoff_ms)
+               | backoff_ms: min(max(delay * 2, next_state.poll_interval_ms), next_state.max_backoff_ms)
              }}
         end
 
@@ -89,15 +88,13 @@ defmodule Jido.Chat.Telegram.PollingWorker do
         delay = min(state.backoff_ms, state.max_backoff_ms)
         schedule_poll(delay)
 
-        {:noreply,
-         %{state | backoff_ms: min(max(delay * 2, state.poll_interval_ms), state.max_backoff_ms)}}
+        {:noreply, %{state | backoff_ms: min(max(delay * 2, state.poll_interval_ms), state.max_backoff_ms)}}
 
       {:error, _reason} ->
         delay = min(state.backoff_ms, state.max_backoff_ms)
         schedule_poll(delay)
 
-        {:noreply,
-         %{state | backoff_ms: min(max(delay * 2, state.poll_interval_ms), state.max_backoff_ms)}}
+        {:noreply, %{state | backoff_ms: min(max(delay * 2, state.poll_interval_ms), state.max_backoff_ms)}}
     end
   end
 

@@ -60,8 +60,7 @@ defmodule Jido.Chat.Telegram.CallbackQuery do
         map when is_map(map) ->
           Author.new(%{
             user_id: to_string(map[:id] || map["id"] || "unknown"),
-            user_name:
-              map[:username] || map["username"] || to_string(map[:id] || map["id"] || "unknown"),
+            user_name: map[:username] || map["username"] || to_string(map[:id] || map["id"] || "unknown"),
             full_name: map[:first_name] || map["first_name"],
             is_bot: map[:is_bot] || map["is_bot"] || false
           })

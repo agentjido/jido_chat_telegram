@@ -2,9 +2,9 @@
 
 `jido_chat_telegram` is the Telegram adapter package for `jido_chat`.
 
-## Experimental Status
+## Release Status
 
-This package is experimental and pre-1.0. APIs and behavior will change.
+This package is being prepared for the Jido 1.x chat package release line.
 It is part of the Elixir implementation aligned to the Vercel Chat SDK
 ([chat-sdk.dev/docs](https://www.chat-sdk.dev/docs)).
 
@@ -123,7 +123,7 @@ from `test/test_helper.exs`.
 
 ## Ingress Modes (`listener_child_specs/2`)
 
-`Jido.Chat.Telegram.Adapter.listener_child_specs/2` supports:
+The Telegram adapter ingress callback supports:
 
 - `ingress.mode = "webhook"`: no listener workers (`{:ok, []}`), host HTTP handles webhook ingress.
 - `ingress.mode = "polling"`: starts `PollingWorker` and emits updates via `sink_mfa`.

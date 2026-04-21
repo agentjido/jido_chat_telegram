@@ -77,9 +77,7 @@ defmodule Jido.Chat.Telegram.ExGramAdapter do
        do: {:ok, body}
 
   defp handle_result({_req, %Req.Response{body: body}}),
-    do:
-      {:error,
-       %ExGram.Error{code: :response_status_not_match, message: ExGram.Adapter.encode(body)}}
+    do: {:error, %ExGram.Error{code: :response_status_not_match, message: ExGram.Adapter.encode(body)}}
 
   defp handle_result({_req, exception}), do: {:error, %ExGram.Error{code: exception}}
 end

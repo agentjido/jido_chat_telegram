@@ -15,8 +15,7 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
 
       case method do
         "sendMessage" ->
-          {:ok,
-           %{"message_id" => 42, "chat" => %{"id" => payload["chat_id"]}, "date" => 1_706_745_600}}
+          {:ok, %{"message_id" => 42, "chat" => %{"id" => payload["chat_id"]}, "date" => 1_706_745_600}}
 
         "sendMessageDraft" ->
           {:ok, true}
@@ -685,8 +684,7 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
       }
     }
 
-    assert {:ok, _updated_chat,
-            %Jido.Chat.Incoming{external_message_id: 333, text: "edited text"}} =
+    assert {:ok, _updated_chat, %Jido.Chat.Incoming{external_message_id: 333, text: "edited text"}} =
              Adapter.handle_webhook(chat, update, [])
   end
 
@@ -709,12 +707,10 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
       }
     }
 
-    assert {:ok, _updated_chat,
-            %Jido.Chat.Incoming{external_room_id: -100_123, external_message_id: 444}} =
+    assert {:ok, _updated_chat, %Jido.Chat.Incoming{external_room_id: -100_123, external_message_id: 444}} =
              Adapter.handle_webhook(chat, channel_post, [])
 
-    assert {:ok, _updated_chat,
-            %Jido.Chat.Incoming{external_room_id: -100_123, external_message_id: 445}} =
+    assert {:ok, _updated_chat, %Jido.Chat.Incoming{external_room_id: -100_123, external_message_id: 445}} =
              Adapter.handle_webhook(chat, edited_channel_post, [])
   end
 
