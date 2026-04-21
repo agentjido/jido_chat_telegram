@@ -90,11 +90,10 @@ defmodule Jido.Chat.Telegram.MixProject do
 
   defp package do
     [
-      files: ["lib", "mix.exs", "README.md", "LICENSE", "CHANGELOG.md", "usage-rules.md"],
+      files: ["lib", "mix.exs", "README.md", "LICENSE", "usage-rules.md"],
       maintainers: ["Mike Hostetler"],
       licenses: ["Apache-2.0"],
       links: %{
-        "Changelog" => "https://hexdocs.pm/jido_chat_telegram/changelog.html",
         "Discord" => "https://jido.run/discord",
         "Documentation" => "https://hexdocs.pm/jido_chat_telegram",
         "GitHub" => @source_url,
@@ -110,7 +109,6 @@ defmodule Jido.Chat.Telegram.MixProject do
       source_url: @source_url,
       extras: [
         "README.md",
-        "CHANGELOG.md",
         "CONTRIBUTING.md"
       ]
     ]

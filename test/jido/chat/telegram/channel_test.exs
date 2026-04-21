@@ -6,6 +6,11 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
   alias Jido.Chat.{Capabilities, FileUpload, PostPayload}
   alias Jido.Chat.Telegram.Adapter
 
+  setup_all do
+    Code.ensure_loaded!(Adapter)
+    :ok
+  end
+
   defmodule MockTransport do
     @behaviour Jido.Chat.Telegram.Transport
 
