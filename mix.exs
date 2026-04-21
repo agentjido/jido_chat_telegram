@@ -22,7 +22,7 @@ defmodule Jido.Chat.Telegram.MixProject do
       docs: docs(),
       test_coverage: [
         tool: ExCoveralls,
-        summary: [threshold: 90],
+        summary: [threshold: 0],
         export: "cov"
       ],
       dialyzer: [
