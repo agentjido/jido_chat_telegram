@@ -23,11 +23,13 @@ defmodule Jido.Chat.Telegram.Ingress do
       |> ensure_map()
       |> map_get([:ingress, "ingress"])
       |> ensure_map()
+      |> normalize_ingress_map()
 
     ingress =
       opts
       |> Keyword.get(:ingress, %{})
       |> ensure_map()
+      |> normalize_ingress_map()
 
     Map.merge(settings_ingress, ingress)
   end
@@ -110,6 +112,27 @@ defmodule Jido.Chat.Telegram.Ingress do
       _ -> :invalid
     end
   end
+
+  defp normalize_ingress_map(map) when is_map(map) do
+    Map.new(map, fn {key, value} -> {ingress_key(key), value} end)
+  end
+
+  defp ingress_key("allowed_updates"), do: :allowed_updates
+  defp ingress_key("certificate"), do: :certificate
+  defp ingress_key("drop_pending_updates"), do: :drop_pending_updates
+  defp ingress_key("ip_address"), do: :ip_address
+  defp ingress_key("max_connections"), do: :max_connections
+  defp ingress_key("mode"), do: :mode
+  defp ingress_key("raw"), do: :raw
+  defp ingress_key("raw_payload"), do: :raw_payload
+  defp ingress_key("secret_token"), do: :secret_token
+  defp ingress_key("target_url"), do: :target_url
+  defp ingress_key("token"), do: :token
+  defp ingress_key("transport"), do: :transport
+  defp ingress_key("transport_opts"), do: :transport_opts
+  defp ingress_key("url"), do: :url
+  defp ingress_key("webhook_url"), do: :webhook_url
+  defp ingress_key(key), do: key
 
   defp ensure_webhook_mode(ingress) do
     case mode(ingress) do

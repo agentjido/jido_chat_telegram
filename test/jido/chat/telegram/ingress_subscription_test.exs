@@ -102,6 +102,32 @@ defmodule Jido.Chat.Telegram.IngressSubscriptionTest do
     assert payload["ip_address"] == "203.0.113.10"
   end
 
+  test "per-call ingress overrides settings ingress across key styles" do
+    assert {:ok, subscription} =
+             Adapter.ensure_ingress_subscription("bridge_override",
+               token: "bot-token",
+               transport: SubscriptionTransport,
+               settings: %{
+                 ingress: %{
+                   mode: :polling,
+                   target_url: "https://settings.example.test/webhooks/telegram",
+                   transport_opts: %{debug: false}
+                 }
+               },
+               ingress: %{
+                 "mode" => "webhook",
+                 "target_url" => "https://override.example.test/webhooks/telegram",
+                 "transport_opts" => %{"debug" => true}
+               }
+             )
+
+    assert subscription.subscription_id == "telegram:webhook:bridge_override"
+
+    assert_received {:set_webhook, "bot-token", payload, opts}
+    assert payload["url"] == "https://override.example.test/webhooks/telegram"
+    assert opts[:debug] == true
+  end
+
   test "list_ingress_subscriptions/2 returns the active Telegram webhook" do
     assert {:ok, [subscription]} =
              Adapter.list_ingress_subscriptions("bridge_tg",
