@@ -20,6 +20,7 @@ defmodule Jido.Chat.Telegram.Adapter do
     DeleteOptions,
     EditOptions,
     Extensions,
+    Ingress,
     MetadataOptions,
     PollingWorker,
     ReactionOptions,
@@ -72,9 +73,9 @@ defmodule Jido.Chat.Telegram.Adapter do
 
   @impl true
   def listener_child_specs(bridge_id, opts \\ []) when is_binary(bridge_id) and is_list(opts) do
-    ingress = normalize_ingress_opts(opts)
+    ingress = Ingress.normalize_opts(opts)
 
-    case ingress_mode(ingress) do
+    case Ingress.mode(ingress) do
       :webhook ->
         {:ok, []}
 
@@ -105,20 +106,7 @@ defmodule Jido.Chat.Telegram.Adapter do
   @spec ensure_ingress_subscription(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def ensure_ingress_subscription(bridge_id, opts \\ [])
       when is_binary(bridge_id) and is_list(opts) do
-    ingress = normalize_ingress_opts(opts)
-
-    with :ok <- ensure_webhook_ingress(ingress),
-         {:ok, target_url} <- subscription_target_url(opts, ingress),
-         {:ok, token} <- subscription_token(opts, ingress),
-         {:ok, result} <-
-           transport(opts).call(
-             token,
-             "setWebhook",
-             webhook_payload(target_url, opts, ingress),
-             subscription_transport_opts(opts, ingress)
-           ) do
-      {:ok, webhook_subscription(bridge_id, target_url, :active, result)}
-    end
+    Ingress.ensure_subscription(bridge_id, opts)
   end
 
   @doc """
@@ -126,19 +114,7 @@ defmodule Jido.Chat.Telegram.Adapter do
   """
   @spec list_ingress_subscriptions(String.t(), keyword()) :: {:ok, [map()]} | {:error, term()}
   def list_ingress_subscriptions(bridge_id, opts \\ []) when is_binary(bridge_id) and is_list(opts) do
-    ingress = normalize_ingress_opts(opts)
-
-    with :ok <- ensure_webhook_ingress(ingress),
-         {:ok, token} <- subscription_token(opts, ingress),
-         {:ok, result} <-
-           transport(opts).call(
-             token,
-             "getWebhookInfo",
-             %{},
-             subscription_transport_opts(opts, ingress)
-           ) do
-      {:ok, webhook_info_subscriptions(bridge_id, result)}
-    end
+    Ingress.list_subscriptions(bridge_id, opts)
   end
 
   @doc """
@@ -148,22 +124,7 @@ defmodule Jido.Chat.Telegram.Adapter do
           {:ok, map()} | {:error, term()}
   def delete_ingress_subscription(bridge_id, subscription_id, opts \\ [])
       when is_binary(bridge_id) and is_binary(subscription_id) and is_list(opts) do
-    ingress = normalize_ingress_opts(opts)
-
-    with :ok <- ensure_webhook_ingress(ingress),
-         {:ok, token} <- subscription_token(opts, ingress),
-         {:ok, result} <-
-           transport(opts).call(
-             token,
-             "deleteWebhook",
-             delete_webhook_payload(opts, ingress),
-             subscription_transport_opts(opts, ingress)
-           ) do
-      {:ok,
-       webhook_subscription(bridge_id, subscription_target_url(opts, ingress, nil), :deleted, result,
-         subscription_id: subscription_id
-       )}
-    end
+    Ingress.delete_subscription(bridge_id, subscription_id, opts)
   end
 
   @impl true
@@ -908,33 +869,6 @@ defmodule Jido.Chat.Telegram.Adapter do
             "missing Telegram bot token; pass :token option or configure :jido_chat_telegram, :telegram_bot_token"
   end
 
-  defp subscription_token(opts, ingress) do
-    token =
-      first_present([
-        Keyword.get(opts, :token),
-        map_get(ingress, [:token, "token"]),
-        map_get(subscription_credentials(opts), [:token, "token"])
-      ])
-
-    {:ok, fetch_token(token)}
-  rescue
-    ArgumentError -> {:error, :missing_token}
-  end
-
-  defp subscription_credentials(opts) do
-    bridge_config_credentials =
-      opts
-      |> Keyword.get(:bridge_config)
-      |> bridge_credentials()
-
-    opts_credentials =
-      opts
-      |> Keyword.get(:credentials, %{})
-      |> ensure_map()
-
-    Map.merge(bridge_config_credentials, opts_credentials)
-  end
-
   defp transport(opts) when is_list(opts), do: transport(Map.new(opts))
   defp transport(%{transport: transport}) when not is_nil(transport), do: transport
   defp transport(_opts), do: ExGramClient
@@ -1169,174 +1103,6 @@ defmodule Jido.Chat.Telegram.Adapter do
 
   defp normalize_metadata(list) when is_list(list), do: Enum.map(list, &normalize_metadata/1)
   defp normalize_metadata(other), do: other
-
-  defp normalize_ingress_opts(opts) do
-    ingress = Keyword.get(opts, :ingress, %{}) |> ensure_map()
-    settings_ingress = settings_ingress(opts)
-
-    Map.merge(settings_ingress, ingress)
-  end
-
-  defp settings_ingress(opts) do
-    opts
-    |> Keyword.get(:settings, %{})
-    |> ensure_map()
-    |> map_get([:ingress, "ingress"])
-    |> ensure_map()
-  end
-
-  defp ensure_map(%{} = map), do: map
-  defp ensure_map(_), do: %{}
-
-  defp ingress_mode(ingress) do
-    case map_get(ingress, [:mode, "mode"]) do
-      nil -> :webhook
-      :webhook -> :webhook
-      :polling -> :polling
-      "webhook" -> :webhook
-      "polling" -> :polling
-      _ -> :invalid
-    end
-  end
-
-  defp ensure_webhook_ingress(ingress) do
-    case ingress_mode(ingress) do
-      :webhook -> :ok
-      :polling -> {:error, :unsupported}
-      :invalid -> {:error, :invalid_ingress_mode}
-    end
-  end
-
-  defp subscription_target_url(opts, ingress) do
-    case subscription_target_url(opts, ingress, nil) do
-      nil -> {:error, :missing_webhook_url}
-      "" -> {:error, :missing_webhook_url}
-      target_url when is_binary(target_url) -> {:ok, target_url}
-      target_url -> {:ok, to_string(target_url)}
-    end
-  end
-
-  defp subscription_target_url(opts, ingress, default) do
-    first_present([
-      Keyword.get(opts, :target_url),
-      Keyword.get(opts, :webhook_url),
-      Keyword.get(opts, :url),
-      map_get(ingress, [:target_url, "target_url"]),
-      map_get(ingress, [:webhook_url, "webhook_url"]),
-      map_get(ingress, [:url, "url"]),
-      default
-    ])
-  end
-
-  defp webhook_payload(target_url, opts, ingress) do
-    opts
-    |> raw_webhook_payload(ingress)
-    |> Map.put("url", target_url)
-    |> maybe_put_payload("certificate", subscription_option(opts, ingress, :certificate))
-    |> maybe_put_payload("ip_address", subscription_option(opts, ingress, :ip_address))
-    |> maybe_put_payload("max_connections", subscription_option(opts, ingress, :max_connections))
-    |> maybe_put_payload("allowed_updates", subscription_option(opts, ingress, :allowed_updates))
-    |> maybe_put_payload("drop_pending_updates", subscription_option(opts, ingress, :drop_pending_updates))
-    |> maybe_put_payload("secret_token", subscription_option(opts, ingress, :secret_token))
-  end
-
-  defp delete_webhook_payload(opts, ingress) do
-    %{}
-    |> maybe_put_payload("drop_pending_updates", subscription_option(opts, ingress, :drop_pending_updates))
-  end
-
-  defp raw_webhook_payload(opts, ingress) do
-    opts
-    |> subscription_option(ingress, :raw)
-    |> case do
-      nil -> subscription_option(opts, ingress, :raw_payload)
-      raw -> raw
-    end
-    |> payload_map()
-  end
-
-  defp payload_map(nil), do: %{}
-  defp payload_map(map) when is_map(map), do: Map.new(map, &payload_pair/1)
-  defp payload_map(keyword) when is_list(keyword), do: keyword |> Map.new() |> payload_map()
-  defp payload_map(_), do: %{}
-
-  defp payload_pair({key, value}) when is_atom(key), do: {Atom.to_string(key), value}
-  defp payload_pair({key, value}) when is_binary(key), do: {key, value}
-
-  defp subscription_option(opts, ingress, key) when is_atom(key) do
-    case Keyword.fetch(opts, key) do
-      {:ok, value} -> value
-      :error -> map_get(ingress, [key, Atom.to_string(key)])
-    end
-  end
-
-  defp subscription_transport_opts(opts, ingress) do
-    ingress_transport_opts =
-      ingress
-      |> map_get([:transport_opts, "transport_opts"])
-      |> normalize_keyword_opts()
-
-    Keyword.merge(
-      ingress_transport_opts,
-      pick_opts(opts, [:debug, :check_params, :ex_gram_module, :ex_gram_adapter])
-    )
-  end
-
-  defp normalize_keyword_opts(opts) when is_list(opts), do: opts
-  defp normalize_keyword_opts(opts) when is_map(opts), do: Enum.into(opts, [])
-  defp normalize_keyword_opts(_), do: []
-
-  defp webhook_info_subscriptions(bridge_id, result) do
-    info = normalize_metadata(result)
-    target_url = map_get(info, [:url, "url"])
-
-    if is_binary(target_url) and target_url != "" do
-      [webhook_subscription(bridge_id, target_url, :active, result, metadata: webhook_info_metadata(info))]
-    else
-      []
-    end
-  end
-
-  defp webhook_subscription(bridge_id, target_url, status, raw, opts \\ []) do
-    subscription_id = Keyword.get(opts, :subscription_id, telegram_webhook_subscription_id(bridge_id))
-    metadata = Keyword.get(opts, :metadata, %{})
-
-    %{
-      subscription_id: subscription_id,
-      external_id: subscription_id,
-      target_url: target_url,
-      status: status,
-      metadata: Map.merge(%{provider: :telegram, mode: :webhook}, metadata),
-      raw: raw
-    }
-  end
-
-  defp webhook_info_metadata(info) do
-    %{
-      pending_update_count: map_get(info, [:pending_update_count, "pending_update_count"]),
-      last_error_date: map_get(info, [:last_error_date, "last_error_date"]),
-      last_error_message: map_get(info, [:last_error_message, "last_error_message"]),
-      last_synchronization_error_date:
-        map_get(info, [:last_synchronization_error_date, "last_synchronization_error_date"]),
-      max_connections: map_get(info, [:max_connections, "max_connections"]),
-      allowed_updates: map_get(info, [:allowed_updates, "allowed_updates"]),
-      ip_address: map_get(info, [:ip_address, "ip_address"])
-    }
-    |> drop_nil_values()
-  end
-
-  defp telegram_webhook_subscription_id(bridge_id), do: "telegram:webhook:#{bridge_id}"
-
-  defp maybe_put_payload(map, _key, nil), do: map
-  defp maybe_put_payload(map, key, value), do: Map.put(map, key, value)
-
-  defp drop_nil_values(map) do
-    Map.reject(map, fn {_key, value} -> is_nil(value) end)
-  end
-
-  defp first_present(values) do
-    Enum.find(values, fn value -> not is_nil(value) end)
-  end
 
   defp validate_sink_mfa({module, function, args})
        when is_atom(module) and is_atom(function) and is_list(args),
