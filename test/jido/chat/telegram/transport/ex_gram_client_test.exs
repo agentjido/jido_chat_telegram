@@ -55,6 +55,21 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
       send(self(), {:get_updates, opts})
       {:ok, [%{"update_id" => 11, "message" => %{"message_id" => 1}}]}
     end
+
+    def set_webhook(url, opts) do
+      send(self(), {:set_webhook, url, opts})
+      {:ok, true}
+    end
+
+    def get_webhook_info(opts) do
+      send(self(), {:get_webhook_info, opts})
+      {:ok, %{url: "https://example.test/webhooks/telegram"}}
+    end
+
+    def delete_webhook(opts) do
+      send(self(), {:delete_webhook, opts})
+      {:ok, true}
+    end
   end
 
   defmodule MockHttpAdapter do
@@ -154,6 +169,47 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
     assert Keyword.get(opts, :offset) == 10
     assert Keyword.get(opts, :timeout) == 25
     assert Keyword.get(opts, :allowed_updates) == ["message"]
+    assert Keyword.get(opts, :token) == "abc"
+  end
+
+  test "call/4 dispatches setWebhook via ExGram" do
+    assert {:ok, true} =
+             ExGramClient.call(
+               "abc",
+               "setWebhook",
+               %{
+                 "url" => "https://example.test/webhooks/telegram",
+                 "allowed_updates" => ["message"],
+                 "secret_token" => "secret"
+               },
+               ex_gram_module: MockExGram
+             )
+
+    assert_received {:set_webhook, "https://example.test/webhooks/telegram", opts}
+    assert Keyword.get(opts, :allowed_updates) == ["message"]
+    assert Keyword.get(opts, :secret_token) == "secret"
+    assert Keyword.get(opts, :token) == "abc"
+  end
+
+  test "call/4 dispatches getWebhookInfo via ExGram" do
+    assert {:ok, %{url: "https://example.test/webhooks/telegram"}} =
+             ExGramClient.call("abc", "getWebhookInfo", %{}, ex_gram_module: MockExGram)
+
+    assert_received {:get_webhook_info, opts}
+    assert Keyword.get(opts, :token) == "abc"
+  end
+
+  test "call/4 dispatches deleteWebhook via ExGram" do
+    assert {:ok, true} =
+             ExGramClient.call(
+               "abc",
+               "deleteWebhook",
+               %{"drop_pending_updates" => true},
+               ex_gram_module: MockExGram
+             )
+
+    assert_received {:delete_webhook, opts}
+    assert Keyword.get(opts, :drop_pending_updates) == true
     assert Keyword.get(opts, :token) == "abc"
   end
 

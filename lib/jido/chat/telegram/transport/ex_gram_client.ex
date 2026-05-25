@@ -18,6 +18,11 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     "timeout" => :timeout,
     "limit" => :limit,
     "allowed_updates" => :allowed_updates,
+    "certificate" => :certificate,
+    "drop_pending_updates" => :drop_pending_updates,
+    "ip_address" => :ip_address,
+    "max_connections" => :max_connections,
+    "secret_token" => :secret_token,
     "text" => :text,
     "draft_id" => :draft_id,
     "caption" => :caption,
@@ -186,6 +191,56 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
 
       true ->
         {:error, {:unsupported_method, "getUpdates"}}
+    end
+  end
+
+  def call(token, "setWebhook", payload, opts) do
+    params = atomize_payload(payload)
+    url = Map.fetch!(params, :url)
+    method_opts = params |> Map.drop([:url]) |> Map.to_list()
+    module = ex_gram_module(opts)
+
+    cond do
+      function_exported?(module, :set_webhook, 2) ->
+        apply(module, :set_webhook, [url, method_opts ++ ex_gram_runtime_opts(token, opts)])
+
+      function_exported?(module, :set_webhook, 1) ->
+        apply(module, :set_webhook, [url])
+
+      true ->
+        {:error, {:unsupported_method, "setWebhook"}}
+    end
+  end
+
+  def call(token, "getWebhookInfo", _payload, opts) do
+    module = ex_gram_module(opts)
+
+    cond do
+      function_exported?(module, :get_webhook_info, 1) ->
+        apply(module, :get_webhook_info, [ex_gram_runtime_opts(token, opts)])
+
+      function_exported?(module, :get_webhook_info, 0) ->
+        apply(module, :get_webhook_info, [])
+
+      true ->
+        {:error, {:unsupported_method, "getWebhookInfo"}}
+    end
+  end
+
+  def call(token, "deleteWebhook", payload, opts) do
+    params = atomize_payload(payload)
+    method_opts = Map.to_list(params)
+    module = ex_gram_module(opts)
+
+    cond do
+      function_exported?(module, :delete_webhook, 1) ->
+        apply(module, :delete_webhook, [method_opts ++ ex_gram_runtime_opts(token, opts)])
+
+      function_exported?(module, :delete_webhook, 0) ->
+        apply(module, :delete_webhook, [])
+
+      true ->
+        {:error, {:unsupported_method, "deleteWebhook"}}
     end
   end
 
