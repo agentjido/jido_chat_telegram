@@ -4,6 +4,7 @@ defmodule Jido.Chat.Telegram.StreamOptions do
   """
 
   alias Jido.Chat.Telegram.Transport.ExGramClient
+  alias Jido.Chat.Telegram.ParseMode
 
   @schema Zoi.struct(
             __MODULE__,
@@ -38,7 +39,12 @@ defmodule Jido.Chat.Telegram.StreamOptions do
   @doc "Builds typed stream options from keyword, map, or struct input."
   def new(%__MODULE__{} = opts), do: opts
   def new(opts) when is_list(opts), do: opts |> Map.new() |> new()
-  def new(opts) when is_map(opts), do: Jido.Chat.Schema.parse!(__MODULE__, @schema, opts)
+
+  def new(opts) when is_map(opts) do
+    opts
+    |> normalize_parse_mode()
+    |> then(&Jido.Chat.Schema.parse!(__MODULE__, @schema, &1))
+  end
 
   @doc "Builds Telegram draft payload options for `sendMessageDraft`."
   @spec draft_payload_opts(t(), integer()) :: map()
@@ -84,4 +90,11 @@ defmodule Jido.Chat.Telegram.StreamOptions do
 
   defp maybe_kw(keyword, _key, nil), do: keyword
   defp maybe_kw(keyword, key, value), do: Keyword.put(keyword, key, value)
+
+  defp normalize_parse_mode(opts) do
+    case ParseMode.resolve_from_opts(opts) do
+      nil -> opts
+      parse_mode -> Map.put(opts, :parse_mode, parse_mode)
+    end
+  end
 end

@@ -4,6 +4,7 @@ defmodule Jido.Chat.Telegram.PhotoOptions do
   """
 
   alias Jido.Chat.Telegram.Transport.ExGramClient
+  alias Jido.Chat.Telegram.ParseMode
 
   @schema Zoi.struct(
             __MODULE__,
@@ -38,6 +39,7 @@ defmodule Jido.Chat.Telegram.PhotoOptions do
 
   def new(opts) when is_map(opts) do
     opts
+    |> normalize_parse_mode()
     |> normalize_generic_reply_and_thread()
     |> then(&Jido.Chat.Schema.parse!(__MODULE__, @schema, &1))
   end
@@ -69,6 +71,13 @@ defmodule Jido.Chat.Telegram.PhotoOptions do
 
   defp maybe_kw(keyword, _key, nil), do: keyword
   defp maybe_kw(keyword, key, value), do: Keyword.put(keyword, key, value)
+
+  defp normalize_parse_mode(opts) do
+    case ParseMode.resolve_from_opts(opts) do
+      nil -> opts
+      parse_mode -> Map.put(opts, :parse_mode, parse_mode)
+    end
+  end
 
   defp normalize_generic_reply_and_thread(opts) do
     opts

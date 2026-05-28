@@ -233,6 +233,53 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert result.date == 1_706_745_600
   end
 
+  test "send_message/3 infers parse_mode from top-level format" do
+    assert {:ok, _result} =
+             Adapter.send_message(123, "hello",
+               token: "bot-token",
+               transport: MockTransport,
+               format: :markdown
+             )
+
+    assert_received {:transport_call, "bot-token", "sendMessage", payload}
+    assert payload["parse_mode"] == "MarkdownV2"
+  end
+
+  test "send_message/3 keeps explicit parse_mode over top-level format" do
+    assert {:ok, _result} =
+             Adapter.send_message(123, "hello",
+               token: "bot-token",
+               transport: MockTransport,
+               parse_mode: "Markdown",
+               format: :html
+             )
+
+    assert_received {:transport_call, "bot-token", "sendMessage", payload}
+    assert payload["parse_mode"] == "Markdown"
+  end
+
+  test "send_message/3 omits parse_mode for plain_text and unknown top-level format" do
+    assert {:ok, _result} =
+             Adapter.send_message(123, "hello",
+               token: "bot-token",
+               transport: MockTransport,
+               format: :plain_text
+             )
+
+    assert_received {:transport_call, "bot-token", "sendMessage", plain_text_payload}
+    refute Map.has_key?(plain_text_payload, "parse_mode")
+
+    assert {:ok, _result} =
+             Adapter.send_message(123, "hello",
+               token: "bot-token",
+               transport: MockTransport,
+               format: :unknown
+             )
+
+    assert_received {:transport_call, "bot-token", "sendMessage", unknown_payload}
+    refute Map.has_key?(unknown_payload, "parse_mode")
+  end
+
   test "adapter stream uses telegram draft updates for private chats and final sendMessage" do
     assert {:ok, result} =
              Jido.Chat.Adapter.stream(
@@ -262,6 +309,29 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert result.message_id == "42"
     assert result.external_message_id == "42"
     assert result.chat_id == 123
+  end
+
+  test "adapter stream infers parse_mode from top-level format for draft and final send" do
+    assert {:ok, _result} =
+             Jido.Chat.Adapter.stream(
+               Jido.Chat.Telegram.Adapter,
+               123,
+               ["hel", "lo"],
+               token: "bot-token",
+               transport: MockTransport,
+               stream_update_interval_ms: 0,
+               draft_id: 7,
+               format: :markdown
+             )
+
+    assert_received {:transport_call, "bot-token", "sendMessageDraft", first_payload}
+    assert first_payload["parse_mode"] == "MarkdownV2"
+
+    assert_received {:transport_call, "bot-token", "sendMessageDraft", second_payload}
+    assert second_payload["parse_mode"] == "MarkdownV2"
+
+    assert_received {:transport_call, "bot-token", "sendMessage", final_payload}
+    assert final_payload["parse_mode"] == "MarkdownV2"
   end
 
   test "adapter stream skips duplicate partial draft updates" do
@@ -346,6 +416,40 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert result.message_id == 42
     assert result.chat_id == 123
     assert result.date == nil
+  end
+
+  test "edit_message/4 infers parse_mode from top-level format" do
+    assert {:ok, _result} =
+             Adapter.edit_message(123, 42, "updated",
+               token: "bot-token",
+               transport: MockTransport,
+               format: :html
+             )
+
+    assert_received {:transport_call, "bot-token", "editMessageText", payload}
+    assert payload["parse_mode"] == "HTML"
+  end
+
+  test "edit_message/4 omits parse_mode for plain_text and unknown top-level format" do
+    assert {:ok, _result} =
+             Adapter.edit_message(123, 42, "updated",
+               token: "bot-token",
+               transport: MockTransport,
+               format: :plain_text
+             )
+
+    assert_received {:transport_call, "bot-token", "editMessageText", plain_text_payload}
+    refute Map.has_key?(plain_text_payload, "parse_mode")
+
+    assert {:ok, _result} =
+             Adapter.edit_message(123, 42, "updated",
+               token: "bot-token",
+               transport: MockTransport,
+               format: :unknown
+             )
+
+    assert_received {:transport_call, "bot-token", "editMessageText", unknown_payload}
+    refute Map.has_key?(unknown_payload, "parse_mode")
   end
 
   test "delete_message/3 delegates to transport" do
@@ -465,6 +569,91 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert payload["caption"] == "hello"
     assert payload["reply_to_message_id"] == 42
     assert payload["message_thread_id"] == 99
+  end
+
+  test "send_file/3 infers parse_mode from top-level format for caption uploads" do
+    assert {:ok, _response} =
+             Adapter.send_file(
+               123,
+               %FileUpload{
+                 kind: :image,
+                 url: "https://example.com/test.png",
+                 metadata: %{"caption" => "hello"}
+               },
+               token: "bot-token",
+               transport: MockTransport,
+               format: :markdown
+             )
+
+    assert_received {:transport_call, "bot-token", "sendPhoto", image_payload}
+    assert image_payload["parse_mode"] == "MarkdownV2"
+
+    assert {:ok, _response} =
+             Adapter.send_file(
+               123,
+               %FileUpload{
+                 kind: :file,
+                 url: "https://example.com/test.pdf",
+                 metadata: %{"caption" => "doc"}
+               },
+               token: "bot-token",
+               transport: MockTransport,
+               format: :html
+             )
+
+    assert_received {:transport_call, "bot-token", "sendDocument", doc_payload}
+    assert doc_payload["parse_mode"] == "HTML"
+  end
+
+  test "send_file/3 keeps explicit parse_mode and omits for plain_text/unknown" do
+    assert {:ok, _response} =
+             Adapter.send_file(
+               123,
+               %FileUpload{
+                 kind: :image,
+                 url: "https://example.com/test.png",
+                 metadata: %{"caption" => "hello"}
+               },
+               token: "bot-token",
+               transport: MockTransport,
+               parse_mode: "Markdown",
+               format: :html
+             )
+
+    assert_received {:transport_call, "bot-token", "sendPhoto", override_payload}
+    assert override_payload["parse_mode"] == "Markdown"
+
+    assert {:ok, _response} =
+             Adapter.send_file(
+               123,
+               %FileUpload{
+                 kind: :file,
+                 url: "https://example.com/test.pdf",
+                 metadata: %{"caption" => "doc"}
+               },
+               token: "bot-token",
+               transport: MockTransport,
+               format: :plain_text
+             )
+
+    assert_received {:transport_call, "bot-token", "sendDocument", plain_text_payload}
+    refute Map.has_key?(plain_text_payload, "parse_mode")
+
+    assert {:ok, _response} =
+             Adapter.send_file(
+               123,
+               %FileUpload{
+                 kind: :file,
+                 url: "https://example.com/test.pdf",
+                 metadata: %{"caption" => "doc"}
+               },
+               token: "bot-token",
+               transport: MockTransport,
+               format: :unknown
+             )
+
+    assert_received {:transport_call, "bot-token", "sendDocument", unknown_payload}
+    refute Map.has_key?(unknown_payload, "parse_mode")
   end
 
   test "send_file/3 supports filesystem paths and raw byte uploads" do

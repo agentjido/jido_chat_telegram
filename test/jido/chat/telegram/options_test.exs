@@ -3,10 +3,13 @@ defmodule Jido.Chat.Telegram.OptionsTest do
 
   alias Jido.Chat.Telegram.{
     DeleteOptions,
+    DocumentOptions,
     EditOptions,
     MetadataOptions,
+    PhotoOptions,
     ReactionOptions,
     SendOptions,
+    StreamOptions,
     TypingOptions
   }
 
@@ -79,5 +82,46 @@ defmodule Jido.Chat.Telegram.OptionsTest do
     assert options.is_big == true
     assert %{"is_big" => true} = ReactionOptions.payload_opts(options)
     assert [debug: true] = ReactionOptions.transport_opts(options)
+  end
+
+  test "option modules infer parse_mode from top-level format" do
+    assert SendOptions.new(format: :markdown).parse_mode == "MarkdownV2"
+    assert EditOptions.new(format: :html).parse_mode == "HTML"
+    assert StreamOptions.new(format: "markdown").parse_mode == "MarkdownV2"
+    assert PhotoOptions.new(format: "html").parse_mode == "HTML"
+    assert DocumentOptions.new(format: "markdown").parse_mode == "MarkdownV2"
+  end
+
+  test "option modules keep explicit parse_mode over top-level format" do
+    assert SendOptions.new(parse_mode: "Markdown", format: :html).parse_mode ==
+             "Markdown"
+
+    assert EditOptions.new(parse_mode: "Markdown", format: :html).parse_mode ==
+             "Markdown"
+
+    assert StreamOptions.new(parse_mode: "Markdown", format: :html).parse_mode ==
+             "Markdown"
+
+    assert PhotoOptions.new(parse_mode: "Markdown", format: :html).parse_mode ==
+             "Markdown"
+
+    assert DocumentOptions.new(parse_mode: "Markdown", format: :html).parse_mode ==
+             "Markdown"
+  end
+
+  test "option modules ignore plain_text and unknown top-level format" do
+    assert SendOptions.new(format: :plain_text).parse_mode == nil
+    assert EditOptions.new(format: "plain_text").parse_mode == nil
+    assert StreamOptions.new(format: :unknown).parse_mode == nil
+    assert PhotoOptions.new(format: "unknown").parse_mode == nil
+    assert DocumentOptions.new(metadata: %{}).parse_mode == nil
+  end
+
+  test "option modules ignore metadata.format" do
+    assert SendOptions.new(metadata: %{format: :markdown}).parse_mode == nil
+    assert EditOptions.new(metadata: %{format: :html}).parse_mode == nil
+    assert StreamOptions.new(metadata: %{format: "markdown"}).parse_mode == nil
+    assert PhotoOptions.new(metadata: %{"format" => "html"}).parse_mode == nil
+    assert DocumentOptions.new(metadata: %{format: "markdown"}).parse_mode == nil
   end
 end

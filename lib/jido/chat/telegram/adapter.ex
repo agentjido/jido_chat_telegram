@@ -599,6 +599,7 @@ defmodule Jido.Chat.Telegram.Adapter do
       :transport,
       :caption,
       :text,
+      :format,
       :parse_mode,
       :reply_to_id,
       :reply_to_message_id,
