@@ -228,7 +228,8 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert payload["text"] == "hello"
     assert payload["parse_mode"] == "HTML"
 
-    assert result.message_id == 42
+    assert result.message_id == "42"
+    assert result.external_message_id == 42
     assert result.chat_id == 123
     assert result.date == 1_706_745_600
   end
@@ -307,7 +308,7 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert final_payload["text"] == "hello"
 
     assert result.message_id == "42"
-    assert result.external_message_id == "42"
+    assert result.external_message_id == 42
     assert result.chat_id == 123
   end
 
@@ -370,7 +371,7 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
 
     refute_received {:transport_call, "bot-token", "sendMessageDraft", _payload}
 
-    assert result.external_message_id == "42"
+    assert result.external_message_id == 42
   end
 
   test "adapter stream returns empty_stream when no content is produced" do
@@ -413,7 +414,8 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert payload["message_id"] == 42
     assert payload["text"] == "updated"
 
-    assert result.message_id == 42
+    assert result.message_id == "42"
+    assert result.external_message_id == 42
     assert result.chat_id == 123
     assert result.date == nil
   end
