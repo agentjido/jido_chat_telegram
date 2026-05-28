@@ -11,3 +11,18 @@ Initial Hex release of `jido_chat_telegram`.
 - Supports Telegram-specific extensions, streaming responses, and ingress helpers.
 
 <!-- changelog -->
+
+## [v1.1.0](https://github.com/agentjido/jido_chat_telegram/compare/v1.0.0...v1.1.0) (2026-05-28)
+
+
+
+
+### Features:
+
+* support Telegram ingress subscriptions by mikehostetler
+
+### Bug Fixes:
+
+* refresh jido_chat dependency and tests by mikehostetler
+
+* infer telegram parse_mode from canonical format (#15) by Julien
