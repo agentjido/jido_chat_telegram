@@ -76,8 +76,8 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
     @behaviour ExGram.Adapter
 
     @impl true
-    def request(verb, path, body, _opts) do
-      send(self(), {:http_request, verb, path, body})
+    def request(verb, path, body, opts) do
+      send(self(), {:http_request, verb, path, body, opts})
       {:ok, true}
     end
   end
@@ -95,6 +95,22 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
     assert Keyword.get(opts, :parse_mode) == "HTML"
     assert Keyword.get(opts, :token) == "abc"
     assert Keyword.get(opts, :adapter) == ExGramAdapter
+  end
+
+  test "call/4 forwards url as ExGram adapter opts" do
+    assert {:ok, %{message_id: 99}} =
+             ExGramClient.call(
+               "abc",
+               "sendMessage",
+               %{"chat_id" => 1, "text" => "hi"},
+               ex_gram_module: MockExGram,
+               url: "http://localhost:8081"
+             )
+
+    assert_received {:send_message, 1, "hi", opts}
+    assert Keyword.get(opts, :token) == "abc"
+    assert Keyword.get(opts, :adapter) == ExGramAdapter
+    assert Keyword.get(opts, :adapter_opts) == [url: "http://localhost:8081"]
   end
 
   test "call/4 dispatches editMessageText via ExGram" do
@@ -234,13 +250,68 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
                ex_gram_adapter: MockHttpAdapter
              )
 
-    assert_received {:http_request, :post, "/botabc/sendMessageDraft", body}
+    assert_received {:http_request, :post, "/botabc/sendMessageDraft", body, opts}
     assert body.chat_id == 1
     assert body.message_thread_id == 9
     assert body.draft_id == 77
     assert body.text == "hello"
     assert body.parse_mode == "Markdown"
     assert body.entities == [%{"type" => "bold", "offset" => 0, "length" => 5}]
+    assert opts == []
+  end
+
+  test "call/4 forwards url to the configured HTTP adapter" do
+    assert {:ok, true} =
+             ExGramClient.call(
+               "abc",
+               "sendMessageDraft",
+               %{"chat_id" => 1, "draft_id" => 77, "text" => "hello"},
+               ex_gram_adapter: MockHttpAdapter,
+               url: "http://localhost:8081"
+             )
+
+    assert_received {:http_request, :post, "/botabc/sendMessageDraft", _body, opts}
+    assert opts == [url: "http://localhost:8081"]
+  end
+
+  test "ExGramAdapter.request/4 uses url adapter option as base URL" do
+    {:ok, listen_socket} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
+    {:ok, port} = :inet.port(listen_socket)
+    parent = self()
+
+    server =
+      Task.async(fn ->
+        {:ok, socket} = :gen_tcp.accept(listen_socket)
+        {:ok, request} = :gen_tcp.recv(socket, 0, 1_000)
+        send(parent, {:local_bot_api_request, request})
+
+        body = ~s({"ok":true,"result":{"message_id":123}})
+
+        response = [
+          "HTTP/1.1 200 OK\r\n",
+          "content-type: application/json\r\n",
+          "content-length: #{byte_size(body)}\r\n",
+          "\r\n",
+          body
+        ]
+
+        :ok = :gen_tcp.send(socket, response)
+        :ok = :gen_tcp.close(socket)
+      end)
+
+    assert {:ok, %{message_id: 123}} =
+             ExGramAdapter.request(
+               :post,
+               "/botabc/sendMessage",
+               %{chat_id: 1, text: "hi"},
+               url: "http://127.0.0.1:#{port}"
+             )
+
+    assert_receive {:local_bot_api_request, request}, 1_000
+    assert request =~ "POST /botabc/sendMessage HTTP/1.1"
+
+    Task.await(server, 1_000)
+    :gen_tcp.close(listen_socket)
   end
 
   test "call/4 dispatches setMessageReaction via ExGram when available" do

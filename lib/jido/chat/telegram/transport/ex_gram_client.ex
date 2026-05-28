@@ -8,6 +8,16 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
   alias ExGram.Model.{ReactionTypeCustomEmoji, ReactionTypeEmoji, ReactionTypePaid}
   alias Jido.Chat.Telegram.ExGramAdapter
 
+  @adapter_opt_keys [
+    :url,
+    :base_url,
+    :connect_timeout,
+    :connect_options,
+    :pool_timeout,
+    :receive_timeout,
+    :finch
+  ]
+
   @payload_keys %{
     "chat_id" => :chat_id,
     "callback_query_id" => :callback_query_id,
@@ -73,7 +83,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     params = atomize_payload(payload)
     adapter = ex_gram_http_adapter(opts)
 
-    request_adapter(adapter, :post, build_path(token, "sendMessageDraft"), params, adapter_request_opts(opts))
+    request_adapter(adapter, :post, build_path(token, "sendMessageDraft"), params, direct_adapter_request_opts(opts))
   end
 
   def call(token, "deleteMessage", payload, opts) do
@@ -304,7 +314,20 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     end
   end
 
-  defp adapter_request_opts(opts), do: Keyword.take(opts, [:debug, :check_params])
+  defp adapter_request_opts(opts) do
+    adapter_request_opts(opts, @adapter_opt_keys)
+  end
+
+  defp direct_adapter_request_opts(opts) do
+    adapter_request_opts(opts, @adapter_opt_keys ++ [:debug, :check_params])
+  end
+
+  defp adapter_request_opts(opts, top_level_keys) do
+    opts
+    |> Keyword.get(:adapter_opts, [])
+    |> normalize_adapter_opts()
+    |> Keyword.merge(Keyword.take(opts, top_level_keys))
+  end
 
   defp build_path(token, name) do
     token_part = "/bot#{token}"
@@ -317,8 +340,43 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
   end
 
   defp ex_gram_runtime_opts(token, opts) do
-    [token: token, adapter: ex_gram_adapter(opts)] ++ Keyword.take(opts, [:debug, :check_params])
+    runtime_opts = [token: token, adapter: ex_gram_adapter(opts)] ++ Keyword.take(opts, [:debug, :check_params])
+
+    case adapter_request_opts(opts) do
+      [] -> runtime_opts
+      adapter_opts -> Keyword.put(runtime_opts, :adapter_opts, adapter_opts)
+    end
   end
+
+  defp normalize_adapter_opts(opts) when is_list(opts) do
+    Enum.reduce(opts, [], fn
+      {key, value}, acc when is_atom(key) ->
+        Keyword.put(acc, key, value)
+
+      {key, value}, acc when is_binary(key) ->
+        case adapter_opt_key(key) do
+          nil -> acc
+          atom_key -> Keyword.put(acc, atom_key, value)
+        end
+
+      _other, acc ->
+        acc
+    end)
+  end
+
+  defp normalize_adapter_opts(opts) when is_map(opts), do: opts |> Map.to_list() |> normalize_adapter_opts()
+  defp normalize_adapter_opts(_opts), do: []
+
+  defp adapter_opt_key("url"), do: :url
+  defp adapter_opt_key("base_url"), do: :base_url
+  defp adapter_opt_key("connect_timeout"), do: :connect_timeout
+  defp adapter_opt_key("connect_options"), do: :connect_options
+  defp adapter_opt_key("pool_timeout"), do: :pool_timeout
+  defp adapter_opt_key("receive_timeout"), do: :receive_timeout
+  defp adapter_opt_key("finch"), do: :finch
+  defp adapter_opt_key("debug"), do: :debug
+  defp adapter_opt_key("check_params"), do: :check_params
+  defp adapter_opt_key(_key), do: nil
 
   defp ex_gram_adapter(opts) do
     Keyword.get(

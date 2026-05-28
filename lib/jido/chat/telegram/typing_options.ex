@@ -10,6 +10,8 @@ defmodule Jido.Chat.Telegram.TypingOptions do
             %{
               token: Zoi.string() |> Zoi.nullish(),
               transport: Zoi.any() |> Zoi.default(ExGramClient),
+              url: Zoi.string() |> Zoi.nullish(),
+              adapter_opts: Zoi.any() |> Zoi.nullish(),
               action: Zoi.string() |> Zoi.default("typing"),
               thread_id: Zoi.any() |> Zoi.nullish(),
               debug: Zoi.boolean() |> Zoi.nullish(),
@@ -49,6 +51,8 @@ defmodule Jido.Chat.Telegram.TypingOptions do
     |> maybe_kw(:check_params, opts.check_params)
     |> maybe_kw(:ex_gram_module, opts.ex_gram_module)
     |> maybe_kw(:ex_gram_adapter, opts.ex_gram_adapter)
+    |> maybe_kw(:url, opts.url)
+    |> maybe_kw(:adapter_opts, opts.adapter_opts)
   end
 
   defp maybe_put(map, _key, nil), do: map

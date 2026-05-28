@@ -11,6 +11,8 @@ defmodule Jido.Chat.Telegram.EditOptions do
             %{
               token: Zoi.string() |> Zoi.nullish(),
               transport: Zoi.any() |> Zoi.default(ExGramClient),
+              url: Zoi.string() |> Zoi.nullish(),
+              adapter_opts: Zoi.any() |> Zoi.nullish(),
               parse_mode: Zoi.string() |> Zoi.nullish(),
               reply_markup: Zoi.any() |> Zoi.nullish(),
               disable_web_page_preview: Zoi.boolean() |> Zoi.nullish(),
@@ -61,6 +63,8 @@ defmodule Jido.Chat.Telegram.EditOptions do
     |> maybe_kw(:check_params, opts.check_params)
     |> maybe_kw(:ex_gram_module, opts.ex_gram_module)
     |> maybe_kw(:ex_gram_adapter, opts.ex_gram_adapter)
+    |> maybe_kw(:url, opts.url)
+    |> maybe_kw(:adapter_opts, opts.adapter_opts)
   end
 
   defp maybe_put(map, _key, nil), do: map

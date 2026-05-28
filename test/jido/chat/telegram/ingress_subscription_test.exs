@@ -117,7 +117,7 @@ defmodule Jido.Chat.Telegram.IngressSubscriptionTest do
                ingress: %{
                  "mode" => "webhook",
                  "target_url" => "https://override.example.test/webhooks/telegram",
-                 "transport_opts" => %{"debug" => true}
+                 "transport_opts" => %{"debug" => true, "url" => "http://localhost:8081"}
                }
              )
 
@@ -126,6 +126,7 @@ defmodule Jido.Chat.Telegram.IngressSubscriptionTest do
     assert_received {:set_webhook, "bot-token", payload, opts}
     assert payload["url"] == "https://override.example.test/webhooks/telegram"
     assert opts[:debug] == true
+    assert opts[:url] == "http://localhost:8081"
   end
 
   test "list_ingress_subscriptions/2 returns the active Telegram webhook" do

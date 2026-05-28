@@ -17,6 +17,7 @@ defmodule Jido.Chat.Telegram.OptionsTest do
     options =
       SendOptions.new(
         token: "token",
+        url: "http://localhost:8081",
         parse_mode: "HTML",
         reply_to_message_id: 123,
         thread_id: 456,
@@ -24,6 +25,7 @@ defmodule Jido.Chat.Telegram.OptionsTest do
       )
 
     assert options.token == "token"
+    assert options.url == "http://localhost:8081"
     assert options.parse_mode == "HTML"
     assert options.reply_to_message_id == 123
     assert options.thread_id == 456
@@ -34,7 +36,16 @@ defmodule Jido.Chat.Telegram.OptionsTest do
              "message_thread_id" => 456
            } = SendOptions.payload_opts(options)
 
-    assert [debug: true] = SendOptions.transport_opts(options)
+    transport_opts = SendOptions.transport_opts(options)
+    assert transport_opts[:debug] == true
+    assert transport_opts[:url] == "http://localhost:8081"
+  end
+
+  test "option modules relay nested adapter options to transport" do
+    options = MetadataOptions.new(token: "token", adapter_opts: [url: "http://localhost:8081"])
+
+    assert [adapter_opts: [url: "http://localhost:8081"]] =
+             MetadataOptions.transport_opts(options)
   end
 
   test "EditOptions.new/1 normalizes keyword options into typed struct" do

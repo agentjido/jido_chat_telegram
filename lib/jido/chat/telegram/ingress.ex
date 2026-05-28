@@ -241,7 +241,7 @@ defmodule Jido.Chat.Telegram.Ingress do
     ingress
     |> map_get([:transport_opts, "transport_opts"])
     |> normalize_keyword_opts()
-    |> Keyword.merge(Keyword.take(opts, [:debug, :check_params, :ex_gram_module, :ex_gram_adapter]))
+    |> Keyword.merge(Keyword.take(opts, [:debug, :check_params, :ex_gram_module, :ex_gram_adapter, :adapter_opts]))
   end
 
   defp normalize_keyword_opts(opts) when is_list(opts) do
@@ -267,6 +267,9 @@ defmodule Jido.Chat.Telegram.Ingress do
   defp transport_key("check_params"), do: :check_params
   defp transport_key("ex_gram_module"), do: :ex_gram_module
   defp transport_key("ex_gram_adapter"), do: :ex_gram_adapter
+  defp transport_key("url"), do: :url
+  defp transport_key("base_url"), do: :base_url
+  defp transport_key("adapter_opts"), do: :adapter_opts
   defp transport_key(_), do: nil
 
   defp subscriptions_from_webhook_info(bridge_id, result) do

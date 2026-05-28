@@ -125,6 +125,16 @@ You can pass `:token` per call, or configure globally:
 config :jido_chat_telegram, :telegram_bot_token, System.get_env("TELEGRAM_BOT_TOKEN")
 ```
 
+To target a local Telegram Bot API server at runtime, pass `:url` with the
+adapter options:
+
+```elixir
+Adapter.send_message(123, "hi",
+  token: System.fetch_env!("TELEGRAM_BOT_TOKEN"),
+  url: "http://localhost:8081"
+)
+```
+
 For tests, this package will automatically load `.env` and `.env.test` via `dotenvy`
 from `test/test_helper.exs`.
 
