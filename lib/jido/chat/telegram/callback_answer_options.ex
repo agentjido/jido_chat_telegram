@@ -10,6 +10,7 @@ defmodule Jido.Chat.Telegram.CallbackAnswerOptions do
             %{
               token: Zoi.string() |> Zoi.nullish(),
               transport: Zoi.any() |> Zoi.default(ExGramClient),
+              adapter_opts: Zoi.any() |> Zoi.nullish(),
               text: Zoi.string() |> Zoi.nullish(),
               show_alert: Zoi.boolean() |> Zoi.nullish(),
               url: Zoi.string() |> Zoi.nullish(),
@@ -53,6 +54,7 @@ defmodule Jido.Chat.Telegram.CallbackAnswerOptions do
     |> maybe_kw(:check_params, opts.check_params)
     |> maybe_kw(:ex_gram_module, opts.ex_gram_module)
     |> maybe_kw(:ex_gram_adapter, opts.ex_gram_adapter)
+    |> maybe_kw(:adapter_opts, opts.adapter_opts)
   end
 
   defp maybe_put(map, _key, nil), do: map

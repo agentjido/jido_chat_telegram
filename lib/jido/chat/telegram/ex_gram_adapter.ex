@@ -6,14 +6,17 @@ defmodule Jido.Chat.Telegram.ExGramAdapter do
   @behaviour ExGram.Adapter
 
   @base_url "https://api.telegram.org"
+  @req_options [:base_url, :json, :form_multipart, :connect_options, :pool_timeout, :receive_timeout, :finch]
 
   @impl ExGram.Adapter
   def request(verb, path, body, opts \\ []) do
-    _opts = opts
+    opts = normalize_opts(opts)
 
     [method: coerce_verb(verb), url: path]
     |> Req.Request.new()
-    |> Req.Request.register_options([:base_url, :json, :form_multipart])
+    |> Req.Request.register_options(@req_options)
+    |> put_finch_options(opts)
+    |> Req.Request.merge_options(request_options(opts))
     |> Req.Request.put_new_option(:base_url, ExGram.Config.get(:ex_gram, :base_url, @base_url))
     |> put_body_option(body)
     |> Req.Steps.put_base_url()
@@ -25,6 +28,62 @@ defmodule Jido.Chat.Telegram.ExGramAdapter do
 
   defp coerce_verb(:get), do: :post
   defp coerce_verb(verb), do: verb
+
+  defp normalize_opts(opts) when is_list(opts) do
+    Enum.reduce(opts, [], fn
+      {key, value}, acc when is_atom(key) ->
+        Keyword.put(acc, key, value)
+
+      {key, value}, acc when is_binary(key) ->
+        case adapter_key(key) do
+          nil -> acc
+          atom_key -> Keyword.put(acc, atom_key, value)
+        end
+
+      _other, acc ->
+        acc
+    end)
+  end
+
+  defp normalize_opts(opts) when is_map(opts), do: opts |> Map.to_list() |> normalize_opts()
+  defp normalize_opts(_opts), do: []
+
+  defp request_options(opts) do
+    opts
+    |> Keyword.take([:base_url])
+    |> maybe_put_base_url(Keyword.get(opts, :url))
+  end
+
+  defp put_finch_options(req, opts) do
+    connect_options =
+      case Keyword.fetch(opts, :connect_options) do
+        {:ok, connect_options} -> connect_options
+        :error -> [timeout: Keyword.get(opts, :connect_timeout, 30_000)]
+      end
+
+    req
+    |> Req.Request.merge_options(
+      connect_options: connect_options,
+      pool_timeout: Keyword.get(opts, :pool_timeout, 5_000),
+      receive_timeout: Keyword.get(opts, :receive_timeout, 60_000)
+    )
+    |> maybe_merge_finch(Keyword.get(opts, :finch))
+  end
+
+  defp maybe_merge_finch(req, nil), do: req
+  defp maybe_merge_finch(req, finch), do: Req.Request.merge_options(req, finch: finch)
+
+  defp maybe_put_base_url(opts, nil), do: opts
+  defp maybe_put_base_url(opts, url), do: Keyword.put(opts, :base_url, url)
+
+  defp adapter_key("url"), do: :url
+  defp adapter_key("base_url"), do: :base_url
+  defp adapter_key("connect_timeout"), do: :connect_timeout
+  defp adapter_key("connect_options"), do: :connect_options
+  defp adapter_key("pool_timeout"), do: :pool_timeout
+  defp adapter_key("receive_timeout"), do: :receive_timeout
+  defp adapter_key("finch"), do: :finch
+  defp adapter_key(_key), do: nil
 
   defp req_parts({:file, name, path}, parts), do: parts ++ [{name, File.stream!(path, 2048)}]
 

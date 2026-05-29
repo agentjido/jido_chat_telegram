@@ -11,6 +11,8 @@ defmodule Jido.Chat.Telegram.StreamOptions do
             %{
               token: Zoi.string() |> Zoi.nullish(),
               transport: Zoi.any() |> Zoi.default(ExGramClient),
+              url: Zoi.string() |> Zoi.nullish(),
+              adapter_opts: Zoi.any() |> Zoi.nullish(),
               draft_id: Zoi.integer() |> Zoi.nullish(),
               stream_update_interval_ms: Zoi.integer() |> Zoi.default(250),
               parse_mode: Zoi.string() |> Zoi.nullish(),
@@ -73,6 +75,8 @@ defmodule Jido.Chat.Telegram.StreamOptions do
     |> maybe_kw(:check_params, opts.check_params)
     |> maybe_kw(:ex_gram_module, opts.ex_gram_module)
     |> maybe_kw(:ex_gram_adapter, opts.ex_gram_adapter)
+    |> maybe_kw(:url, opts.url)
+    |> maybe_kw(:adapter_opts, opts.adapter_opts)
   end
 
   @doc "Builds transport-level options consumed by `ExGramClient`."
@@ -83,6 +87,8 @@ defmodule Jido.Chat.Telegram.StreamOptions do
     |> maybe_kw(:check_params, opts.check_params)
     |> maybe_kw(:ex_gram_module, opts.ex_gram_module)
     |> maybe_kw(:ex_gram_adapter, opts.ex_gram_adapter)
+    |> maybe_kw(:url, opts.url)
+    |> maybe_kw(:adapter_opts, opts.adapter_opts)
   end
 
   defp maybe_put(map, _key, nil), do: map

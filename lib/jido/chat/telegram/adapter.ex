@@ -243,7 +243,16 @@ defmodule Jido.Chat.Telegram.Adapter do
   def delete_message(chat_id, message_id, opts \\ []) do
     opts =
       opts
-      |> pick_opts([:token, :transport, :debug, :check_params, :ex_gram_module, :ex_gram_adapter])
+      |> pick_opts([
+        :token,
+        :transport,
+        :debug,
+        :check_params,
+        :ex_gram_module,
+        :ex_gram_adapter,
+        :url,
+        :adapter_opts
+      ])
       |> DeleteOptions.new()
 
     token = fetch_token(opts.token)
@@ -272,7 +281,9 @@ defmodule Jido.Chat.Telegram.Adapter do
         :debug,
         :check_params,
         :ex_gram_module,
-        :ex_gram_adapter
+        :ex_gram_adapter,
+        :url,
+        :adapter_opts
       ])
       |> maybe_put_action(status)
       |> TypingOptions.new()
@@ -298,7 +309,16 @@ defmodule Jido.Chat.Telegram.Adapter do
   def fetch_metadata(chat_id, opts \\ []) do
     opts =
       opts
-      |> pick_opts([:token, :transport, :debug, :check_params, :ex_gram_module, :ex_gram_adapter])
+      |> pick_opts([
+        :token,
+        :transport,
+        :debug,
+        :check_params,
+        :ex_gram_module,
+        :ex_gram_adapter,
+        :url,
+        :adapter_opts
+      ])
       |> MetadataOptions.new()
 
     token = fetch_token(opts.token)
@@ -338,7 +358,9 @@ defmodule Jido.Chat.Telegram.Adapter do
         :debug,
         :check_params,
         :ex_gram_module,
-        :ex_gram_adapter
+        :ex_gram_adapter,
+        :url,
+        :adapter_opts
       ])
       |> ReactionOptions.new()
 
@@ -376,7 +398,9 @@ defmodule Jido.Chat.Telegram.Adapter do
         :debug,
         :check_params,
         :ex_gram_module,
-        :ex_gram_adapter
+        :ex_gram_adapter,
+        :url,
+        :adapter_opts
       ])
       |> ReactionOptions.new()
 
@@ -409,7 +433,15 @@ defmodule Jido.Chat.Telegram.Adapter do
       topic_name = Keyword.get(opts, :topic_name, "New thread")
 
       transport_opts =
-        pick_opts(opts, [:transport, :debug, :check_params, :ex_gram_module, :ex_gram_adapter])
+        pick_opts(opts, [
+          :transport,
+          :debug,
+          :check_params,
+          :ex_gram_module,
+          :ex_gram_adapter,
+          :url,
+          :adapter_opts
+        ])
 
       with {:ok, result} <-
              transport(opts).call(
@@ -610,7 +642,9 @@ defmodule Jido.Chat.Telegram.Adapter do
       :debug,
       :check_params,
       :ex_gram_module,
-      :ex_gram_adapter
+      :ex_gram_adapter,
+      :url,
+      :adapter_opts
     ])
     |> maybe_put_option(:caption, upload_caption(upload))
   end
@@ -1118,11 +1152,8 @@ defmodule Jido.Chat.Telegram.Adapter do
     transport_opts =
       ingress
       |> map_get([:transport_opts, "transport_opts"])
-      |> case do
-        value when is_list(value) -> value
-        value when is_map(value) -> Enum.into(value, [])
-        _ -> []
-      end
+      |> normalize_transport_opts()
+      |> Keyword.merge(Keyword.take(opts, [:debug, :check_params, :ex_gram_module, :ex_gram_adapter, :adapter_opts]))
 
     [
       bridge_id: bridge_id,
@@ -1140,4 +1171,32 @@ defmodule Jido.Chat.Telegram.Adapter do
 
   defp bridge_credentials(%{credentials: credentials}) when is_map(credentials), do: credentials
   defp bridge_credentials(_), do: %{}
+
+  defp normalize_transport_opts(opts) when is_list(opts) do
+    Enum.reduce(opts, [], fn
+      {key, value}, acc when is_atom(key) ->
+        Keyword.put(acc, key, value)
+
+      {key, value}, acc when is_binary(key) ->
+        case transport_key(key) do
+          nil -> acc
+          atom_key -> Keyword.put(acc, atom_key, value)
+        end
+
+      _other, acc ->
+        acc
+    end)
+  end
+
+  defp normalize_transport_opts(opts) when is_map(opts), do: opts |> Map.to_list() |> normalize_transport_opts()
+  defp normalize_transport_opts(_opts), do: []
+
+  defp transport_key("debug"), do: :debug
+  defp transport_key("check_params"), do: :check_params
+  defp transport_key("ex_gram_module"), do: :ex_gram_module
+  defp transport_key("ex_gram_adapter"), do: :ex_gram_adapter
+  defp transport_key("url"), do: :url
+  defp transport_key("base_url"), do: :base_url
+  defp transport_key("adapter_opts"), do: :adapter_opts
+  defp transport_key(_key), do: nil
 end

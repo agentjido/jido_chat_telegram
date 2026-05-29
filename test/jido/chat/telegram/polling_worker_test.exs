@@ -43,11 +43,17 @@ defmodule Jido.Chat.Telegram.PollingWorkerTest do
 
     assert {:ok, [spec]} =
              Adapter.listener_child_specs("bridge_tg",
-               ingress: %{mode: "polling", token: "bot-token"},
+               ingress: %{
+                 mode: "polling",
+                 token: "bot-token",
+                 transport_opts: %{"url" => "http://localhost:8081"}
+               },
                sink_mfa: {OkSink, :emit, [self()]}
              )
 
     assert spec.id == {:telegram_polling_worker, "bridge_tg"}
+    assert {PollingWorker, :start_link, [worker_opts]} = spec.start
+    assert worker_opts[:transport_opts][:url] == "http://localhost:8081"
   end
 
   test "polling worker emits updates through sink and advances offset on success" do

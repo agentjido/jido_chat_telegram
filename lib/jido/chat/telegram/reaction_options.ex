@@ -10,6 +10,8 @@ defmodule Jido.Chat.Telegram.ReactionOptions do
             %{
               token: Zoi.string() |> Zoi.nullish(),
               transport: Zoi.any() |> Zoi.default(ExGramClient),
+              url: Zoi.string() |> Zoi.nullish(),
+              adapter_opts: Zoi.any() |> Zoi.nullish(),
               is_big: Zoi.boolean() |> Zoi.default(false),
               debug: Zoi.boolean() |> Zoi.nullish(),
               check_params: Zoi.boolean() |> Zoi.nullish(),
@@ -44,6 +46,8 @@ defmodule Jido.Chat.Telegram.ReactionOptions do
     |> maybe_kw(:check_params, opts.check_params)
     |> maybe_kw(:ex_gram_module, opts.ex_gram_module)
     |> maybe_kw(:ex_gram_adapter, opts.ex_gram_adapter)
+    |> maybe_kw(:url, opts.url)
+    |> maybe_kw(:adapter_opts, opts.adapter_opts)
   end
 
   defp maybe_kw(keyword, _key, nil), do: keyword
