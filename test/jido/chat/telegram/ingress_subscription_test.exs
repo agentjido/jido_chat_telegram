@@ -129,6 +129,48 @@ defmodule Jido.Chat.Telegram.IngressSubscriptionTest do
     assert opts[:url] == "http://localhost:8081"
   end
 
+  test "ingress subscription callbacks forward root url as transport option" do
+    target_url = "https://example.test/webhooks/telegram"
+    api_url = "http://localhost:8081"
+
+    assert {:ok, subscription} =
+             Adapter.ensure_ingress_subscription("bridge_tg",
+               token: "bot-token",
+               transport: SubscriptionTransport,
+               url: api_url,
+               ingress: %{target_url: target_url}
+             )
+
+    assert subscription.target_url == target_url
+    assert_received {:set_webhook, "bot-token", payload, opts}
+    assert payload["url"] == target_url
+    assert opts[:url] == api_url
+
+    assert {:ok, [_subscription]} =
+             Adapter.list_ingress_subscriptions("bridge_tg",
+               token: "bot-token",
+               transport: SubscriptionTransport,
+               url: api_url
+             )
+
+    assert_received {:get_webhook_info, "bot-token", %{}, opts}
+    assert opts[:url] == api_url
+
+    assert {:ok, deleted_subscription} =
+             Adapter.delete_ingress_subscription(
+               "bridge_tg",
+               "telegram:webhook:bridge_tg",
+               token: "bot-token",
+               transport: SubscriptionTransport,
+               webhook_url: target_url,
+               url: api_url
+             )
+
+    assert deleted_subscription.target_url == target_url
+    assert_received {:delete_webhook, "bot-token", %{}, opts}
+    assert opts[:url] == api_url
+  end
+
   test "list_ingress_subscriptions/2 returns the active Telegram webhook" do
     assert {:ok, [subscription]} =
              Adapter.list_ingress_subscriptions("bridge_tg",

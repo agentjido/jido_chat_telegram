@@ -13,6 +13,15 @@ defmodule Jido.Chat.Telegram.Ingress do
   @type mode :: :webhook | :polling | :invalid
   @type subscription_result :: {:ok, map()} | {:error, term()}
   @type subscription_list_result :: {:ok, [map()]} | {:error, term()}
+  @root_transport_opt_keys [
+    :debug,
+    :check_params,
+    :ex_gram_module,
+    :ex_gram_adapter,
+    :url,
+    :base_url,
+    :adapter_opts
+  ]
 
   @doc "Normalizes ingress settings from adapter callback options."
   @spec normalize_opts(keyword()) :: map()
@@ -31,7 +40,9 @@ defmodule Jido.Chat.Telegram.Ingress do
       |> ensure_map()
       |> normalize_ingress_map()
 
-    Map.merge(settings_ingress, ingress)
+    settings_ingress
+    |> Map.merge(ingress)
+    |> merge_root_transport_opts(opts)
   end
 
   @doc "Returns the effective ingress mode."
@@ -153,7 +164,6 @@ defmodule Jido.Chat.Telegram.Ingress do
     first_present([
       Keyword.get(opts, :target_url),
       Keyword.get(opts, :webhook_url),
-      Keyword.get(opts, :url),
       map_get(ingress, [:target_url, "target_url"]),
       map_get(ingress, [:webhook_url, "webhook_url"]),
       map_get(ingress, [:url, "url"]),
@@ -241,7 +251,40 @@ defmodule Jido.Chat.Telegram.Ingress do
     ingress
     |> map_get([:transport_opts, "transport_opts"])
     |> normalize_keyword_opts()
-    |> Keyword.merge(Keyword.take(opts, [:debug, :check_params, :ex_gram_module, :ex_gram_adapter, :adapter_opts]))
+    |> Keyword.merge(root_transport_opts(opts))
+  end
+
+  defp merge_root_transport_opts(ingress, opts) do
+    case root_transport_opts(opts) do
+      [] ->
+        ingress
+
+      root_opts ->
+        transport_opts =
+          ingress
+          |> map_get([:transport_opts, "transport_opts"])
+          |> normalize_keyword_opts()
+          |> Keyword.merge(root_opts)
+
+        Map.put(ingress, :transport_opts, transport_opts)
+    end
+  end
+
+  defp root_transport_opts(opts) when is_list(opts) do
+    Enum.reduce(opts, [], fn
+      {key, value}, acc when key in @root_transport_opt_keys ->
+        Keyword.put(acc, key, value)
+
+      {key, value}, acc when is_binary(key) ->
+        case transport_key(key) do
+          nil -> acc
+          atom_key when atom_key in @root_transport_opt_keys -> Keyword.put(acc, atom_key, value)
+          _atom_key -> acc
+        end
+
+      _other, acc ->
+        acc
+    end)
   end
 
   defp normalize_keyword_opts(opts) when is_list(opts) do

@@ -135,6 +135,16 @@ Adapter.send_message(123, "hi",
 )
 ```
 
+The same `:url` option is honored by webhook subscription helpers:
+
+```elixir
+Adapter.ensure_ingress_subscription("bridge_tg",
+  token: System.fetch_env!("TELEGRAM_BOT_TOKEN"),
+  target_url: "https://example.com/webhooks/telegram",
+  url: "http://localhost:8081"
+)
+```
+
 For tests, this package will automatically load `.env` and `.env.test` via `dotenvy`
 from `test/test_helper.exs`.
 
