@@ -17,3 +17,7 @@
 - Do not commit `.env` or credentials.
 - Prefer `Jido.Chat.Adapter` callbacks for shared behavior and `Jido.Chat.Telegram.Extensions` for Telegram-only APIs.
 - Preserve the adapter boundary; supervised runtime concerns belong in `jido_messaging`.
+
+## Release Hygiene
+
+- Do not modify `CHANGELOG.md`; release notes are generated from Git history during release, so keep changes focused on proper Conventional Commits.
