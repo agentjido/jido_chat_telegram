@@ -279,7 +279,6 @@ defmodule Jido.Chat.Telegram.Ingress do
         case transport_key(key) do
           nil -> acc
           atom_key when atom_key in @root_transport_opt_keys -> Keyword.put(acc, atom_key, value)
-          _atom_key -> acc
         end
 
       _other, acc ->
