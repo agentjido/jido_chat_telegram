@@ -59,7 +59,7 @@ defmodule Jido.Chat.Telegram.MixProject do
     [
       {:jido_chat, "~> 1.0"},
       {:ex_gram, "~> 0.57"},
-      {:req, "~> 0.5"},
+      {:req, "~> 0.6.2", override: true},
       {:jason, "~> 1.4"},
       {:dotenvy, "~> 1.1", only: [:test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
