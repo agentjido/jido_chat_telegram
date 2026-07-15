@@ -31,6 +31,11 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
       {:ok, %{id: chat_id, type: "private", first_name: "Alice"}}
     end
 
+    def get_file(file_id, opts) do
+      send(self(), {:get_file, file_id, opts})
+      {:ok, %{file_id: file_id, file_unique_id: "unique-1", file_path: "documents/file.txt"}}
+    end
+
     def set_message_reaction(chat_id, message_id, opts) do
       send(self(), {:set_message_reaction, chat_id, message_id, opts})
       {:ok, true}
@@ -170,6 +175,22 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
     assert_received {:get_chat, 1, opts}
     assert Keyword.get(opts, :token) == "abc"
     assert Keyword.get(opts, :adapter) == ExGramAdapter
+  end
+
+  test "call/4 dispatches getFile via ExGram" do
+    assert {:ok, %{file_path: "documents/file.txt"}} =
+             ExGramClient.call(
+               "abc",
+               "getFile",
+               %{"file_id" => "file-1"},
+               ex_gram_module: MockExGram,
+               url: "http://localhost:8081"
+             )
+
+    assert_received {:get_file, "file-1", opts}
+    assert Keyword.get(opts, :token) == "abc"
+    assert Keyword.get(opts, :adapter) == ExGramAdapter
+    assert Keyword.get(opts, :adapter_opts) == [url: "http://localhost:8081"]
   end
 
   test "call/4 dispatches getUpdates via ExGram" do

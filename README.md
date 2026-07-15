@@ -101,6 +101,17 @@ alias Jido.Chat.Telegram.Extensions
 {:ok, document} =
   Extensions.send_document(123, "BQACAg...", token: System.fetch_env!("TELEGRAM_BOT_TOKEN"))
 
+# Resolve or download an inbound Telegram attachment
+{:ok, file_info} =
+  Extensions.get_file("telegram://file/BQACAg...",
+    token: System.fetch_env!("TELEGRAM_BOT_TOKEN")
+  )
+
+{:ok, bytes} =
+  Extensions.download_file("telegram://file/BQACAg...",
+    token: System.fetch_env!("TELEGRAM_BOT_TOKEN")
+  )
+
 # Telegram-only callback query answer helper
 :ok =
   Extensions.answer_callback_query("1234567890", token: System.fetch_env!("TELEGRAM_BOT_TOKEN"))
@@ -116,6 +127,7 @@ Typed extension structs are provided for:
 - `Jido.Chat.Telegram.CallbackQuery`
 - `Jido.Chat.Telegram.InlineKeyboard` / `InlineKeyboardButton`
 - `Jido.Chat.Telegram.MediaMessage`
+- `Jido.Chat.Telegram.FileInfo`
 
 ## Config
 

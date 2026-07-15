@@ -5,6 +5,7 @@ defmodule Jido.Chat.Telegram.OptionsTest do
     DeleteOptions,
     DocumentOptions,
     EditOptions,
+    FileOptions,
     MetadataOptions,
     PhotoOptions,
     ReactionOptions,
@@ -46,6 +47,18 @@ defmodule Jido.Chat.Telegram.OptionsTest do
 
     assert [adapter_opts: [url: "http://localhost:8081"]] =
              MetadataOptions.transport_opts(options)
+  end
+
+  test "file options expose transport and download configuration" do
+    options =
+      FileOptions.new(
+        token: "token",
+        url: "http://localhost:8081",
+        request_opts: [receive_timeout: 1_000]
+      )
+
+    assert options.request_opts == [receive_timeout: 1_000]
+    assert [url: "http://localhost:8081"] = FileOptions.transport_opts(options)
   end
 
   test "EditOptions.new/1 normalizes keyword options into typed struct" do
