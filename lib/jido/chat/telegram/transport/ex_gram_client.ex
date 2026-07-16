@@ -38,6 +38,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     "caption" => :caption,
     "photo" => :photo,
     "document" => :document,
+    "file_id" => :file_id,
     "media" => :media,
     "action" => :action,
     "reaction" => :reaction,
@@ -117,6 +118,16 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
 
     ex_gram_module(opts).get_chat(
       chat_id,
+      ex_gram_runtime_opts(token, opts)
+    )
+  end
+
+  def call(token, "getFile", payload, opts) do
+    params = atomize_payload(payload)
+    file_id = Map.fetch!(params, :file_id)
+
+    ex_gram_module(opts).get_file(
+      file_id,
       ex_gram_runtime_opts(token, opts)
     )
   end

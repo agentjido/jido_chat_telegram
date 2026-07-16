@@ -11,6 +11,8 @@ defmodule Jido.Chat.Telegram.Extensions do
     CallbackAnswerResult,
     CallbackQuery,
     DocumentOptions,
+    FileInfo,
+    FileOptions,
     MediaMessage,
     PhotoOptions,
     UpdateEnvelope
@@ -29,6 +31,8 @@ defmodule Jido.Chat.Telegram.Extensions do
     %{
       send_photo: :native,
       send_document: :native,
+      get_file: :native,
+      download_file: :native,
       answer_callback_query: :native,
       parse_update_envelope: :native,
       inline_keyboard: :native,
@@ -171,6 +175,58 @@ defmodule Jido.Chat.Telegram.Extensions do
   end
 
   @doc """
+  Resolves a Telegram file reference into typed file metadata.
+
+  Accepts a raw Telegram file id, a `telegram://file/<file_id>` reference, or a
+  normalized media value containing either form in its `url` field.
+  """
+  @spec get_file(String.t() | map(), keyword() | map() | FileOptions.t()) ::
+          {:ok, FileInfo.t()} | {:error, term()}
+  def get_file(file, opts \\ []) do
+    opts = FileOptions.new(opts)
+    token = fetch_token(opts.token)
+
+    with {:ok, file_id} <- normalize_file_id(file),
+         {:ok, result} <-
+           transport(opts).call(
+             token,
+             "getFile",
+             %{"file_id" => file_id},
+             FileOptions.transport_opts(opts)
+           ),
+         {:ok, file_info} <- normalize_file_info(result, file_id) do
+      {:ok, file_info}
+    end
+  end
+
+  @doc """
+  Downloads the bytes for a Telegram file reference.
+
+  The temporary token-bearing Telegram URL is used only for the request and is
+  not returned to the caller.
+  """
+  @spec download_file(String.t() | map(), keyword() | map() | FileOptions.t()) ::
+          {:ok, binary()} | {:error, term()}
+  def download_file(file, opts \\ []) do
+    opts = FileOptions.new(opts)
+    token = fetch_token(opts.token)
+
+    with {:ok, file_info} <- get_file(file, opts),
+         {:ok, file_path} <- file_path(file_info),
+         {:ok, response} <-
+           opts.http_client.get(
+             download_url(file_path, token, opts),
+             download_request_opts(opts.request_opts)
+           ),
+         {:ok, body} <- download_body(response) do
+      {:ok, body}
+    else
+      {:error, _reason} = error -> error
+      _other -> {:error, :invalid_download_response}
+    end
+  end
+
+  @doc """
   Answers a Telegram callback query.
   """
   @spec answer_callback_query(
@@ -250,6 +306,70 @@ defmodule Jido.Chat.Telegram.Extensions do
       metadata: %{coerced: true}
     })
   end
+
+  defp normalize_file_info(result, fallback_file_id) when is_map(result) do
+    attrs = %{
+      file_id: stringify(map_get(result, [:file_id, "file_id"]) || fallback_file_id),
+      file_unique_id: stringify(map_get(result, [:file_unique_id, "file_unique_id"])),
+      file_size: map_get(result, [:file_size, "file_size"]),
+      file_path: map_get(result, [:file_path, "file_path"]),
+      raw: result
+    }
+
+    case Jido.Chat.Schema.parse(FileInfo, FileInfo.schema(), attrs) do
+      {:ok, file_info} -> {:ok, file_info}
+      {:error, _reason} -> {:error, :invalid_file_response}
+    end
+  end
+
+  defp normalize_file_info(_result, _fallback_file_id), do: {:error, :invalid_file_response}
+
+  defp normalize_file_id(%{url: url}), do: normalize_file_id(url)
+  defp normalize_file_id(%{"url" => url}), do: normalize_file_id(url)
+
+  defp normalize_file_id("telegram://file/" <> file_id), do: validate_file_id(file_id)
+
+  defp normalize_file_id(file_id) when is_binary(file_id), do: validate_file_id(file_id)
+  defp normalize_file_id(_file), do: {:error, :invalid_file_reference}
+
+  defp validate_file_id(file_id) do
+    if String.trim(file_id) == "", do: {:error, :invalid_file_reference}, else: {:ok, file_id}
+  end
+
+  defp file_path(%FileInfo{file_path: file_path}) when is_binary(file_path) and file_path != "",
+    do: {:ok, file_path}
+
+  defp file_path(%FileInfo{}), do: {:error, :file_path_missing}
+
+  defp download_url(file_path, token, opts) do
+    base_url = opts.url || adapter_base_url(opts.adapter_opts) || "https://api.telegram.org"
+
+    String.trim_trailing(base_url, "/") <>
+      "/file/bot" <> token <> "/" <> String.trim_leading(file_path, "/")
+  end
+
+  defp adapter_base_url(opts) when is_list(opts),
+    do: Keyword.get(opts, :url) || Keyword.get(opts, :base_url)
+
+  defp adapter_base_url(opts) when is_map(opts),
+    do: map_get(opts, [:url, "url", :base_url, "base_url"])
+
+  defp adapter_base_url(_opts), do: nil
+
+  # Req otherwise decodes JSON attachments based on their content type.
+  defp download_request_opts(opts), do: Keyword.put(opts, :decode_body, false)
+
+  defp download_body(%{status: status, body: body})
+       when status in 200..299 and is_binary(body),
+       do: {:ok, body}
+
+  defp download_body(%{status: status}) when status in 200..299,
+    do: {:error, :invalid_download_body}
+
+  defp download_body(%{status: status}) when is_integer(status),
+    do: {:error, {:file_download_failed, status}}
+
+  defp download_body(_response), do: {:error, :invalid_download_response}
 
   defp pick_photo_file_id(list) when is_list(list) do
     list
