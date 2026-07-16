@@ -98,13 +98,21 @@ defmodule Jido.Chat.Telegram.ExtensionsTest do
                request_opts: [receive_timeout: 1_000]
              )
 
-    assert_received {:download, "http://localhost:8081/file/botbot-token/documents/report.txt",
-                     [receive_timeout: 1_000]}
+    assert_received {:download, "http://localhost:8081/file/botbot-token/documents/report.txt", request_opts}
+
+    assert Keyword.get(request_opts, :receive_timeout) == 1_000
+    assert Keyword.get(request_opts, :decode_body) == false
   end
 
   test "get_file/2 rejects empty and unsupported references" do
     assert {:error, :invalid_file_reference} =
              Extensions.get_file(%{}, token: "bot-token", transport: MockTransport)
+
+    assert {:error, :invalid_file_reference} =
+             Extensions.get_file("telegram://file/",
+               token: "bot-token",
+               transport: MockTransport
+             )
   end
 
   test "parse_update/1 normalizes callback_query into typed envelope" do

@@ -212,7 +212,7 @@ defmodule Jido.Chat.Telegram.Extensions do
 
     with {:ok, %FileInfo{file_path: file_path}} when is_binary(file_path) <- get_file(file, opts),
          url <- download_url(file_path, token, opts),
-         {:ok, response} <- opts.http_client.get(url, opts.request_opts),
+         {:ok, response} <- opts.http_client.get(url, download_request_opts(opts.request_opts)),
          {:ok, body} <- download_body(response) do
       {:ok, body}
     else
@@ -316,8 +316,9 @@ defmodule Jido.Chat.Telegram.Extensions do
   defp normalize_file_id(%{url: url}), do: normalize_file_id(url)
   defp normalize_file_id(%{"url" => url}), do: normalize_file_id(url)
 
-  defp normalize_file_id("telegram://file/" <> file_id) when file_id != "",
-    do: {:ok, file_id}
+  defp normalize_file_id("telegram://file/" <> file_id) do
+    if file_id == "", do: {:error, :invalid_file_reference}, else: {:ok, file_id}
+  end
 
   defp normalize_file_id(file_id) when is_binary(file_id) and file_id != "", do: {:ok, file_id}
   defp normalize_file_id(_file), do: {:error, :invalid_file_reference}
@@ -336,6 +337,15 @@ defmodule Jido.Chat.Telegram.Extensions do
     do: map_get(opts, [:url, "url", :base_url, "base_url"])
 
   defp adapter_base_url(_opts), do: nil
+
+  # Req otherwise decodes JSON attachments based on their content type.
+  defp download_request_opts(opts) when is_list(opts),
+    do: Keyword.put(opts, :decode_body, false)
+
+  defp download_request_opts(opts) when is_map(opts),
+    do: Map.put(opts, :decode_body, false)
+
+  defp download_request_opts(_opts), do: [decode_body: false]
 
   defp download_body(%Req.Response{status: status, body: body})
        when status in 200..299 and is_binary(body),
