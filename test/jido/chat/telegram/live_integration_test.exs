@@ -231,7 +231,6 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
     end)
   end
 
-  @tag :telegram_file_download
   test "file download preserves raw JSON attachment bytes", ctx do
     download_ref = @download_ref || "https://httpbin.org/json"
 

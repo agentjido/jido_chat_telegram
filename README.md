@@ -201,8 +201,7 @@ mix test test/jido/chat/telegram/live_integration_test.exs --include live
 To run only the file-download integration test:
 
 ```bash
-mix test test/jido/chat/telegram/live_integration_test.exs \
-  --only telegram_file_download
+mix test test/jido/chat/telegram/live_integration_test.exs:234 --include live
 ```
 
 Current live coverage in that file includes:
