@@ -44,20 +44,38 @@ defmodule Jido.Chat.Telegram.ExtensionsTest do
     def call(token, "getFile", payload, opts) do
       send(self(), {:get_file, token, payload, opts})
 
-      {:ok,
-       %{
-         "file_id" => payload["file_id"],
-         "file_unique_id" => "unique-1",
-         "file_size" => 12,
-         "file_path" => "documents/report.txt"
-       }}
+      case payload["file_id"] do
+        "invalid-metadata" ->
+          {:ok, true}
+
+        "invalid-fields" ->
+          {:ok, %{"file_id" => "invalid-fields", "file_size" => %{unexpected: true}}}
+
+        "missing-path" ->
+          {:ok, %{"file_id" => "missing-path", "file_unique_id" => "unique-missing"}}
+
+        file_id ->
+          {:ok,
+           %{
+             "file_id" => file_id,
+             "file_unique_id" => "unique-1",
+             "file_size" => 12,
+             "file_path" => "documents/#{file_id}.txt"
+           }}
+      end
     end
   end
 
   defmodule MockHttpClient do
     def get(url, opts) do
       send(self(), {:download, url, opts})
-      {:ok, %Req.Response{status: 200, body: "file contents"}}
+
+      cond do
+        String.contains?(url, "http-error") -> {:ok, %{status: 404, body: "not found"}}
+        String.contains?(url, "decoded-body") -> {:ok, %{status: 200, body: %{decoded: true}}}
+        String.contains?(url, "invalid-response") -> {:ok, :unexpected}
+        true -> {:ok, %{status: 200, body: "file contents"}}
+      end
     end
   end
 
@@ -76,7 +94,7 @@ defmodule Jido.Chat.Telegram.ExtensionsTest do
               file_id: "telegram-file-id",
               file_unique_id: "unique-1",
               file_size: 12,
-              file_path: "documents/report.txt"
+              file_path: "documents/telegram-file-id.txt"
             }} =
              Extensions.get_file(%{url: "telegram://file/telegram-file-id"},
                token: "bot-token",
@@ -98,7 +116,7 @@ defmodule Jido.Chat.Telegram.ExtensionsTest do
                request_opts: [receive_timeout: 1_000]
              )
 
-    assert_received {:download, "http://localhost:8081/file/botbot-token/documents/report.txt", request_opts}
+    assert_received {:download, "http://localhost:8081/file/botbot-token/documents/telegram-file-id.txt", request_opts}
 
     assert Keyword.get(request_opts, :receive_timeout) == 1_000
     assert Keyword.get(request_opts, :decode_body) == false
@@ -113,6 +131,21 @@ defmodule Jido.Chat.Telegram.ExtensionsTest do
                token: "bot-token",
                transport: MockTransport
              )
+
+    assert {:error, :invalid_file_reference} =
+             Extensions.get_file(" \t\n", token: "bot-token", transport: MockTransport)
+  end
+
+  test "file helpers return stable errors for invalid successful responses" do
+    opts = [token: "bot-token", transport: MockTransport, http_client: MockHttpClient]
+
+    assert {:error, :invalid_file_response} = Extensions.get_file("invalid-metadata", opts)
+    assert {:error, :invalid_file_response} = Extensions.get_file("invalid-fields", opts)
+    assert {:error, :invalid_file_response} = Extensions.download_file("invalid-metadata", opts)
+    assert {:error, :file_path_missing} = Extensions.download_file("missing-path", opts)
+    assert {:error, {:file_download_failed, 404}} = Extensions.download_file("http-error", opts)
+    assert {:error, :invalid_download_body} = Extensions.download_file("decoded-body", opts)
+    assert {:error, :invalid_download_response} = Extensions.download_file("invalid-response", opts)
   end
 
   test "parse_update/1 normalizes callback_query into typed envelope" do

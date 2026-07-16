@@ -17,7 +17,7 @@ defmodule Jido.Chat.Telegram.FileOptions do
               ex_gram_module: Zoi.any() |> Zoi.nullish(),
               ex_gram_adapter: Zoi.any() |> Zoi.nullish(),
               http_client: Zoi.any() |> Zoi.default(Req),
-              request_opts: Zoi.any() |> Zoi.default([])
+              request_opts: Zoi.keyword(Zoi.any()) |> Zoi.default([])
             },
             coerce: true
           )
