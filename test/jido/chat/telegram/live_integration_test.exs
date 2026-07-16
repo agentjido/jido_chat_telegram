@@ -27,6 +27,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
   @reaction System.get_env("TELEGRAM_TEST_REACTION") || "👍"
   @photo_ref System.get_env("TELEGRAM_TEST_PHOTO_REF")
   @document_ref System.get_env("TELEGRAM_TEST_DOCUMENT_REF")
+  @download_ref System.get_env("TELEGRAM_TEST_DOWNLOAD_REF")
 
   @moduletag :live
   @moduletag :telegram_live
@@ -228,6 +229,38 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
         Adapter.delete_message(ctx.chat_id, document_id, ctx.opts)
       end)
     end)
+  end
+
+  @tag :telegram_file_download
+  test "file download preserves raw JSON attachment bytes", ctx do
+    download_ref = @download_ref || "https://httpbin.org/json"
+
+    assert {:ok, document} =
+             Extensions.send_document(ctx.chat_id, download_ref,
+               token: ctx.token,
+               caption: "jido live download #{System.system_time(:millisecond)}"
+             )
+
+    assert is_binary(document.file_id) and document.file_id != ""
+    {delete_id, ""} = document |> message_id() |> Integer.parse()
+
+    on_exit(fn ->
+      cleanup_delete(fn ->
+        Adapter.delete_message(ctx.chat_id, delete_id, ctx.opts)
+      end)
+    end)
+
+    file_ref = "telegram://file/#{document.file_id}"
+
+    assert {:ok, file_info} = Extensions.get_file(%{url: file_ref}, token: ctx.token)
+    assert file_info.file_id == document.file_id
+    assert is_binary(file_info.file_path) and file_info.file_path != ""
+
+    assert {:ok, uri_bytes} = Extensions.download_file(file_ref, token: ctx.token)
+    assert {:ok, raw_id_bytes} = Extensions.download_file(document.file_id, token: ctx.token)
+    assert uri_bytes == raw_id_bytes
+    assert {:ok, decoded} = Jason.decode(uri_bytes)
+    assert is_map(decoded)
   end
 
   test "canonical media sends succeed through send_file and core post_message", ctx do

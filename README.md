@@ -195,7 +195,14 @@ cp .env.example .env
 3. Run:
 
 ```bash
-mix test test/jido/chat/telegram/live_integration_test.exs
+mix test test/jido/chat/telegram/live_integration_test.exs --include live
+```
+
+To run only the file-download integration test:
+
+```bash
+mix test test/jido/chat/telegram/live_integration_test.exs \
+  --only telegram_file_download
 ```
 
 Current live coverage in that file includes:
@@ -208,6 +215,7 @@ Current live coverage in that file includes:
 - forum topic creation via `open_thread/3` when `TELEGRAM_TEST_FORUM_CHAT_ID` is set
 - reactions, with explicit unsupported acceptance when the Bot API feature is unavailable
 - media sends through `Jido.Chat.Telegram.Extensions`
+- attachment metadata resolution and raw-byte downloads, including JSON content
 - canonical media sends through `send_file/3` and core `post_message/4`
 - webhook-shaped ingress
 - unsupported-core contract checks
