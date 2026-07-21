@@ -14,6 +14,8 @@ defmodule Jido.Chat.Telegram.SendOptions do
               url: Zoi.string() |> Zoi.nullish(),
               adapter_opts: Zoi.any() |> Zoi.nullish(),
               parse_mode: Zoi.string() |> Zoi.nullish(),
+              rich_format: Zoi.any() |> Zoi.nullish(),
+              protect_content: Zoi.boolean() |> Zoi.nullish(),
               reply_to_message_id: Zoi.any() |> Zoi.nullish(),
               disable_notification: Zoi.boolean() |> Zoi.nullish(),
               reply_markup: Zoi.any() |> Zoi.nullish(),
@@ -44,6 +46,7 @@ defmodule Jido.Chat.Telegram.SendOptions do
   def new(opts) when is_map(opts) do
     opts
     |> normalize_parse_mode()
+    |> normalize_rich_format()
     |> normalize_generic_reply_and_thread()
     |> then(&Jido.Chat.Schema.parse!(__MODULE__, @schema, &1))
   end
@@ -60,6 +63,22 @@ defmodule Jido.Chat.Telegram.SendOptions do
     |> maybe_put("disable_web_page_preview", opts.disable_web_page_preview)
     |> maybe_put("entities", opts.entities)
     |> maybe_put("link_preview_options", opts.link_preview_options)
+  end
+
+  @doc """
+  Builds Telegram API payload options for `sendRichMessage`.
+
+  Rich messages carry their own formatting inside the `rich_message` payload, so
+  `parse_mode`, `entities`, and the link-preview options accepted by `sendMessage`
+  are not valid here and are dropped.
+  """
+  @spec rich_payload_opts(t()) :: map()
+  def rich_payload_opts(%__MODULE__{} = opts) do
+    %{}
+    |> maybe_put("disable_notification", opts.disable_notification)
+    |> maybe_put("protect_content", opts.protect_content)
+    |> maybe_put("reply_markup", opts.reply_markup)
+    |> maybe_put("message_thread_id", opts.thread_id)
   end
 
   @doc "Builds transport-level options consumed by `ExGramClient`."
@@ -84,6 +103,13 @@ defmodule Jido.Chat.Telegram.SendOptions do
     case ParseMode.resolve_from_opts(opts) do
       nil -> opts
       parse_mode -> Map.put(opts, :parse_mode, parse_mode)
+    end
+  end
+
+  defp normalize_rich_format(opts) do
+    case ParseMode.resolve_rich_format(opts) do
+      nil -> opts
+      rich_format -> Map.put(opts, :rich_format, rich_format)
     end
   end
 

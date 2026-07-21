@@ -16,6 +16,7 @@ defmodule Jido.Chat.Telegram.StreamOptions do
               draft_id: Zoi.integer() |> Zoi.nullish(),
               stream_update_interval_ms: Zoi.integer() |> Zoi.default(250),
               parse_mode: Zoi.string() |> Zoi.nullish(),
+              rich_format: Zoi.any() |> Zoi.nullish(),
               disable_notification: Zoi.boolean() |> Zoi.nullish(),
               reply_markup: Zoi.any() |> Zoi.nullish(),
               thread_id: Zoi.any() |> Zoi.nullish(),
@@ -45,6 +46,7 @@ defmodule Jido.Chat.Telegram.StreamOptions do
   def new(opts) when is_map(opts) do
     opts
     |> normalize_parse_mode()
+    |> normalize_rich_format()
     |> then(&Jido.Chat.Schema.parse!(__MODULE__, @schema, &1))
   end
 
@@ -65,6 +67,7 @@ defmodule Jido.Chat.Telegram.StreamOptions do
     |> maybe_kw(:token, opts.token)
     |> maybe_kw(:transport, opts.transport)
     |> maybe_kw(:parse_mode, opts.parse_mode)
+    |> maybe_kw(:rich_format, opts.rich_format)
     |> maybe_kw(:disable_notification, opts.disable_notification)
     |> maybe_kw(:reply_markup, opts.reply_markup)
     |> maybe_kw(:thread_id, opts.thread_id)
@@ -96,6 +99,13 @@ defmodule Jido.Chat.Telegram.StreamOptions do
 
   defp maybe_kw(keyword, _key, nil), do: keyword
   defp maybe_kw(keyword, key, value), do: Keyword.put(keyword, key, value)
+
+  defp normalize_rich_format(opts) do
+    case ParseMode.resolve_rich_format(opts) do
+      nil -> opts
+      rich_format -> Map.put(opts, :rich_format, rich_format)
+    end
+  end
 
   defp normalize_parse_mode(opts) do
     case ParseMode.resolve_from_opts(opts) do

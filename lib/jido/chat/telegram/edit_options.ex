@@ -14,6 +14,7 @@ defmodule Jido.Chat.Telegram.EditOptions do
               url: Zoi.string() |> Zoi.nullish(),
               adapter_opts: Zoi.any() |> Zoi.nullish(),
               parse_mode: Zoi.string() |> Zoi.nullish(),
+              rich_format: Zoi.any() |> Zoi.nullish(),
               reply_markup: Zoi.any() |> Zoi.nullish(),
               disable_web_page_preview: Zoi.boolean() |> Zoi.nullish(),
               entities: Zoi.any() |> Zoi.nullish(),
@@ -41,6 +42,7 @@ defmodule Jido.Chat.Telegram.EditOptions do
   def new(opts) when is_map(opts) do
     opts
     |> normalize_parse_mode()
+    |> normalize_rich_format()
     |> then(&Jido.Chat.Schema.parse!(__MODULE__, @schema, &1))
   end
 
@@ -53,6 +55,18 @@ defmodule Jido.Chat.Telegram.EditOptions do
     |> maybe_put("disable_web_page_preview", opts.disable_web_page_preview)
     |> maybe_put("entities", opts.entities)
     |> maybe_put("link_preview_options", opts.link_preview_options)
+  end
+
+  @doc """
+  Builds Telegram API payload options for a rich `editMessageText`.
+
+  Rich messages carry their own formatting inside `rich_message`, so `parse_mode`,
+  `entities`, and the link-preview options are not valid here and are dropped.
+  """
+  @spec rich_payload_opts(t()) :: map()
+  def rich_payload_opts(%__MODULE__{} = opts) do
+    %{}
+    |> maybe_put("reply_markup", opts.reply_markup)
   end
 
   @doc "Builds transport-level options consumed by `ExGramClient`."
@@ -72,6 +86,13 @@ defmodule Jido.Chat.Telegram.EditOptions do
 
   defp maybe_kw(keyword, _key, nil), do: keyword
   defp maybe_kw(keyword, key, value), do: Keyword.put(keyword, key, value)
+
+  defp normalize_rich_format(opts) do
+    case ParseMode.resolve_rich_format(opts) do
+      nil -> opts
+      rich_format -> Map.put(opts, :rich_format, rich_format)
+    end
+  end
 
   defp normalize_parse_mode(opts) do
     case ParseMode.resolve_from_opts(opts) do

@@ -155,11 +155,10 @@ defmodule Jido.Chat.Telegram.Adapter do
     opts = SendOptions.new(opts)
     token = fetch_token(opts.token)
 
-    payload =
-      Map.merge(%{"chat_id" => chat_id, "text" => text}, SendOptions.payload_opts(opts))
+    {method, payload} = build_send_request(chat_id, text, opts)
 
     with {:ok, result} <-
-           transport(opts).call(token, "sendMessage", payload, SendOptions.transport_opts(opts)) do
+           transport(opts).call(token, method, payload, SendOptions.transport_opts(opts)) do
       {:ok,
        Response.new(%{
          message_id: map_get(result, [:message_id, "message_id"]),
@@ -170,6 +169,40 @@ defmodule Jido.Chat.Telegram.Adapter do
          raw: result
        })}
     end
+  end
+
+  # Rich messages (Bot API 10.1) are sent through `sendRichMessage`, which takes the
+  # whole body as Markdown or HTML inside `rich_message` and parses it server-side —
+  # that is what renders tables, headings, and nested lists that `sendMessage` cannot.
+  defp build_send_request(chat_id, text, %SendOptions{rich_format: nil} = opts) do
+    {"sendMessage", Map.merge(%{"chat_id" => chat_id, "text" => text}, SendOptions.payload_opts(opts))}
+  end
+
+  defp build_send_request(chat_id, text, %SendOptions{rich_format: rich_format} = opts) do
+    rich_message = %{Atom.to_string(rich_format) => text}
+
+    {"sendRichMessage",
+     Map.merge(
+       %{"chat_id" => chat_id, "rich_message" => rich_message},
+       SendOptions.rich_payload_opts(opts)
+     )}
+  end
+
+  # Bot API 10.1 made `text` optional on `editMessageText` so an existing message can
+  # be replaced with rich content — which is how a plain status placeholder becomes a
+  # table-bearing answer.
+  defp build_edit_payload(chat_id, message_id, text, %EditOptions{rich_format: nil} = opts) do
+    EditOptions.payload_opts(opts)
+    |> Map.merge(%{"chat_id" => chat_id, "message_id" => message_id, "text" => text})
+  end
+
+  defp build_edit_payload(chat_id, message_id, text, %EditOptions{rich_format: rich} = opts) do
+    EditOptions.rich_payload_opts(opts)
+    |> Map.merge(%{
+      "chat_id" => chat_id,
+      "message_id" => message_id,
+      "rich_message" => %{Atom.to_string(rich) => text}
+    })
   end
 
   @impl true
@@ -216,9 +249,7 @@ defmodule Jido.Chat.Telegram.Adapter do
     opts = EditOptions.new(opts)
     token = fetch_token(opts.token)
 
-    payload =
-      EditOptions.payload_opts(opts)
-      |> Map.merge(%{"chat_id" => chat_id, "message_id" => message_id, "text" => text})
+    payload = build_edit_payload(chat_id, message_id, text, opts)
 
     with {:ok, result} <-
            transport(opts).call(

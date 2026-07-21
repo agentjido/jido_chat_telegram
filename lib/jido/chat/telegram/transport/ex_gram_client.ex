@@ -5,7 +5,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
 
   @behaviour Jido.Chat.Telegram.Transport
 
-  alias ExGram.Model.{ReactionTypeCustomEmoji, ReactionTypeEmoji, ReactionTypePaid}
+  alias ExGram.Model.{InputRichMessage, ReactionTypeCustomEmoji, ReactionTypeEmoji, ReactionTypePaid}
   alias Jido.Chat.Telegram.ExGramAdapter
 
   @adapter_opt_keys [
@@ -34,6 +34,8 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     "max_connections" => :max_connections,
     "secret_token" => :secret_token,
     "text" => :text,
+    "rich_message" => :rich_message,
+    "protect_content" => :protect_content,
     "draft_id" => :draft_id,
     "caption" => :caption,
     "photo" => :photo,
@@ -69,15 +71,43 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     )
   end
 
-  def call(token, "editMessageText", payload, opts) do
+  def call(token, "sendRichMessage", payload, opts) do
     params = atomize_payload(payload)
-    text = Map.fetch!(params, :text)
-    method_opts = params |> Map.drop([:text]) |> Map.to_list()
+    chat_id = Map.fetch!(params, :chat_id)
+    rich_message = params |> Map.fetch!(:rich_message) |> build_rich_message()
+    method_opts = params |> Map.drop([:chat_id, :rich_message]) |> Map.to_list()
 
-    ex_gram_module(opts).edit_message_text(
-      text,
+    ex_gram_module(opts).send_rich_message(
+      chat_id,
+      rich_message,
       method_opts ++ ex_gram_runtime_opts(token, opts)
     )
+  end
+
+  def call(token, "editMessageText", payload, opts) do
+    params = atomize_payload(payload)
+
+    # Bot API 10.1 made `text` optional — a message can be edited into rich content
+    # instead, in which case the body travels as `rich_message`.
+    case Map.fetch(params, :rich_message) do
+      {:ok, rich_message} ->
+        method_opts =
+          params
+          |> Map.drop([:rich_message])
+          |> Map.put(:rich_message, build_rich_message(rich_message))
+          |> Map.to_list()
+
+        ex_gram_module(opts).edit_message_text(method_opts ++ ex_gram_runtime_opts(token, opts))
+
+      :error ->
+        text = Map.fetch!(params, :text)
+        method_opts = params |> Map.drop([:text]) |> Map.to_list()
+
+        ex_gram_module(opts).edit_message_text(
+          text,
+          method_opts ++ ex_gram_runtime_opts(token, opts)
+        )
+    end
   end
 
   def call(token, "sendMessageDraft", payload, opts) do
@@ -305,6 +335,29 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
         end
     end)
   end
+
+  defp build_rich_message(%InputRichMessage{} = rich_message), do: rich_message
+
+  defp build_rich_message(rich_message) when is_map(rich_message) do
+    struct(
+      InputRichMessage,
+      Enum.reduce(rich_message, %{}, fn {key, value}, acc ->
+        case rich_message_key(key) do
+          nil -> acc
+          atom_key -> Map.put(acc, atom_key, value)
+        end
+      end)
+    )
+  end
+
+  defp rich_message_key(key) when key in [:markdown, "markdown"], do: :markdown
+  defp rich_message_key(key) when key in [:html, "html"], do: :html
+  defp rich_message_key(key) when key in [:is_rtl, "is_rtl"], do: :is_rtl
+
+  defp rich_message_key(key) when key in [:skip_entity_detection, "skip_entity_detection"],
+    do: :skip_entity_detection
+
+  defp rich_message_key(_key), do: nil
 
   defp ex_gram_module(opts), do: Keyword.get(opts, :ex_gram_module, ExGram)
 
