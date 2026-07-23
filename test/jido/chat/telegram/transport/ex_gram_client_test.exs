@@ -281,6 +281,28 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
     assert opts == []
   end
 
+  test "call/4 dispatches sendRichMessageDraft via the configured HTTP adapter" do
+    assert {:ok, true} =
+             ExGramClient.call(
+               "abc",
+               "sendRichMessageDraft",
+               %{
+                 "chat_id" => 1,
+                 "message_thread_id" => 9,
+                 "draft_id" => 77,
+                 "rich_message" => %{"markdown" => "| A | B |"}
+               },
+               ex_gram_adapter: MockHttpAdapter
+             )
+
+    assert_received {:http_request, :post, "/botabc/sendRichMessageDraft", body, opts}
+    assert body.chat_id == 1
+    assert body.message_thread_id == 9
+    assert body.draft_id == 77
+    assert body.rich_message == %{"markdown" => "| A | B |"}
+    assert opts == []
+  end
+
   test "call/4 forwards url to the configured HTTP adapter" do
     assert {:ok, true} =
              ExGramClient.call(

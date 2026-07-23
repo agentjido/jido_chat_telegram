@@ -16,7 +16,7 @@ defmodule Jido.Chat.Telegram.StreamOptions do
               draft_id: Zoi.integer() |> Zoi.nullish(),
               stream_update_interval_ms: Zoi.integer() |> Zoi.default(250),
               parse_mode: Zoi.string() |> Zoi.nullish(),
-              rich_format: Zoi.any() |> Zoi.nullish(),
+              rich_format: Zoi.enum([:markdown, :html]) |> Zoi.nullish(),
               disable_notification: Zoi.boolean() |> Zoi.nullish(),
               reply_markup: Zoi.any() |> Zoi.nullish(),
               thread_id: Zoi.any() |> Zoi.nullish(),
@@ -50,14 +50,30 @@ defmodule Jido.Chat.Telegram.StreamOptions do
     |> then(&Jido.Chat.Schema.parse!(__MODULE__, @schema, &1))
   end
 
-  @doc "Builds Telegram draft payload options for `sendMessageDraft`."
-  @spec draft_payload_opts(t(), integer()) :: map()
-  def draft_payload_opts(%__MODULE__{} = opts, draft_id) when is_integer(draft_id) do
-    %{}
-    |> maybe_put("message_thread_id", opts.thread_id)
-    |> Map.put("draft_id", draft_id)
-    |> maybe_put("parse_mode", opts.parse_mode)
-    |> maybe_put("entities", opts.entities)
+  @doc "Builds the Telegram method and payload for a draft update."
+  @spec draft_request(t(), integer(), String.t()) :: {String.t(), map()}
+  def draft_request(%__MODULE__{rich_format: nil} = opts, draft_id, text)
+      when is_integer(draft_id) and is_binary(text) do
+    payload =
+      %{}
+      |> maybe_put("message_thread_id", opts.thread_id)
+      |> Map.put("draft_id", draft_id)
+      |> Map.put("text", text)
+      |> maybe_put("parse_mode", opts.parse_mode)
+      |> maybe_put("entities", opts.entities)
+
+    {"sendMessageDraft", payload}
+  end
+
+  def draft_request(%__MODULE__{rich_format: rich_format} = opts, draft_id, text)
+      when is_integer(draft_id) and is_binary(text) do
+    payload =
+      %{}
+      |> maybe_put("message_thread_id", opts.thread_id)
+      |> Map.put("draft_id", draft_id)
+      |> Map.put("rich_message", %{Atom.to_string(rich_format) => text})
+
+    {"sendRichMessageDraft", payload}
   end
 
   @doc "Builds keyword options for the final `send_message/3` call."

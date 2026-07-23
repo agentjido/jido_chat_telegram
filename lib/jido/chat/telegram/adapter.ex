@@ -983,13 +983,12 @@ defmodule Jido.Chat.Telegram.Adapter do
     now_ms = System.monotonic_time(:millisecond)
 
     if send_draft_now?(state.last_update_ms, now_ms, interval_ms) do
-      payload =
-        StreamOptions.draft_payload_opts(opts, draft_id)
-        |> Map.merge(%{"chat_id" => draft_chat_id, "text" => state.text})
+      {method, draft_payload} = StreamOptions.draft_request(opts, draft_id, state.text)
+      payload = Map.put(draft_payload, "chat_id", draft_chat_id)
 
       case transport(opts).call(
              token,
-             "sendMessageDraft",
+             method,
              payload,
              StreamOptions.transport_opts(opts)
            ) do

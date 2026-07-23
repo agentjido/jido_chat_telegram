@@ -14,7 +14,7 @@ defmodule Jido.Chat.Telegram.EditOptions do
               url: Zoi.string() |> Zoi.nullish(),
               adapter_opts: Zoi.any() |> Zoi.nullish(),
               parse_mode: Zoi.string() |> Zoi.nullish(),
-              rich_format: Zoi.any() |> Zoi.nullish(),
+              rich_format: Zoi.enum([:markdown, :html]) |> Zoi.nullish(),
               reply_markup: Zoi.any() |> Zoi.nullish(),
               disable_web_page_preview: Zoi.boolean() |> Zoi.nullish(),
               entities: Zoi.any() |> Zoi.nullish(),

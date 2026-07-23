@@ -5,7 +5,14 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
 
   @behaviour Jido.Chat.Telegram.Transport
 
-  alias ExGram.Model.{InputRichMessage, ReactionTypeCustomEmoji, ReactionTypeEmoji, ReactionTypePaid}
+  alias ExGram.Model.{
+    InputRichMessage,
+    ReactionTypeCustomEmoji,
+    ReactionTypeEmoji,
+    ReactionTypePaid,
+    ReplyParameters
+  }
+
   alias Jido.Chat.Telegram.ExGramAdapter
 
   @adapter_opt_keys [
@@ -50,6 +57,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     "cache_time" => :cache_time,
     "parse_mode" => :parse_mode,
     "reply_to_message_id" => :reply_to_message_id,
+    "reply_parameters" => :reply_parameters,
     "disable_notification" => :disable_notification,
     "reply_markup" => :reply_markup,
     "disable_web_page_preview" => :disable_web_page_preview,
@@ -75,7 +83,12 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     params = atomize_payload(payload)
     chat_id = Map.fetch!(params, :chat_id)
     rich_message = params |> Map.fetch!(:rich_message) |> build_rich_message()
-    method_opts = params |> Map.drop([:chat_id, :rich_message]) |> Map.to_list()
+
+    method_opts =
+      params
+      |> Map.drop([:chat_id, :rich_message])
+      |> build_reply_parameters()
+      |> Map.to_list()
 
     ex_gram_module(opts).send_rich_message(
       chat_id,
@@ -115,6 +128,19 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     adapter = ex_gram_http_adapter(opts)
 
     request_adapter(adapter, :post, build_path(token, "sendMessageDraft"), params, direct_adapter_request_opts(opts))
+  end
+
+  def call(token, "sendRichMessageDraft", payload, opts) do
+    params = atomize_payload(payload)
+    adapter = ex_gram_http_adapter(opts)
+
+    request_adapter(
+      adapter,
+      :post,
+      build_path(token, "sendRichMessageDraft"),
+      params,
+      direct_adapter_request_opts(opts)
+    )
   end
 
   def call(token, "deleteMessage", payload, opts) do
@@ -358,6 +384,16 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     do: :skip_entity_detection
 
   defp rich_message_key(_key), do: nil
+
+  defp build_reply_parameters(%{reply_parameters: %ReplyParameters{}} = params), do: params
+
+  defp build_reply_parameters(%{reply_parameters: reply_parameters} = params)
+       when is_map(reply_parameters) do
+    message_id = Map.get(reply_parameters, :message_id) || Map.get(reply_parameters, "message_id")
+    Map.put(params, :reply_parameters, %ReplyParameters{message_id: message_id})
+  end
+
+  defp build_reply_parameters(params), do: params
 
   defp ex_gram_module(opts), do: Keyword.get(opts, :ex_gram_module, ExGram)
 

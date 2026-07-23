@@ -14,7 +14,7 @@ defmodule Jido.Chat.Telegram.SendOptions do
               url: Zoi.string() |> Zoi.nullish(),
               adapter_opts: Zoi.any() |> Zoi.nullish(),
               parse_mode: Zoi.string() |> Zoi.nullish(),
-              rich_format: Zoi.any() |> Zoi.nullish(),
+              rich_format: Zoi.enum([:markdown, :html]) |> Zoi.nullish(),
               protect_content: Zoi.boolean() |> Zoi.nullish(),
               reply_to_message_id: Zoi.any() |> Zoi.nullish(),
               disable_notification: Zoi.boolean() |> Zoi.nullish(),
@@ -58,6 +58,7 @@ defmodule Jido.Chat.Telegram.SendOptions do
     |> maybe_put("parse_mode", opts.parse_mode)
     |> maybe_put("reply_to_message_id", opts.reply_to_message_id)
     |> maybe_put("disable_notification", opts.disable_notification)
+    |> maybe_put("protect_content", opts.protect_content)
     |> maybe_put("reply_markup", opts.reply_markup)
     |> maybe_put("message_thread_id", opts.thread_id)
     |> maybe_put("disable_web_page_preview", opts.disable_web_page_preview)
@@ -79,6 +80,7 @@ defmodule Jido.Chat.Telegram.SendOptions do
     |> maybe_put("protect_content", opts.protect_content)
     |> maybe_put("reply_markup", opts.reply_markup)
     |> maybe_put("message_thread_id", opts.thread_id)
+    |> maybe_put_reply_parameters(opts.reply_to_message_id)
   end
 
   @doc "Builds transport-level options consumed by `ExGramClient`."
@@ -95,6 +97,12 @@ defmodule Jido.Chat.Telegram.SendOptions do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp maybe_put_reply_parameters(map, nil), do: map
+
+  defp maybe_put_reply_parameters(map, message_id) do
+    Map.put(map, "reply_parameters", %{"message_id" => message_id})
+  end
 
   defp maybe_kw(keyword, _key, nil), do: keyword
   defp maybe_kw(keyword, key, value), do: Keyword.put(keyword, key, value)

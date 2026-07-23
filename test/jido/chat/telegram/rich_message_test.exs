@@ -10,7 +10,7 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
 
   use ExUnit.Case, async: true
 
-  alias ExGram.Model.InputRichMessage
+  alias ExGram.Model.{InputRichMessage, ReplyParameters}
   alias Jido.Chat.Telegram.Adapter
   alias Jido.Chat.Telegram.DocumentOptions
   alias Jido.Chat.Telegram.EditOptions
@@ -72,6 +72,18 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
       assert payload["text"] == "plain body"
       assert payload["parse_mode"] == "HTML"
       refute Map.has_key?(payload, "rich_message")
+    end
+
+    test "plain messages pass protect_content to sendMessage" do
+      assert {:ok, _response} =
+               Adapter.send_message(99, "plain body",
+                 token: "bot-token",
+                 transport: CapturingTransport,
+                 protect_content: true
+               )
+
+      assert_received {:sent, "bot-token", "sendMessage", payload, _opts}
+      assert payload["protect_content"] == true
     end
 
     test "format: :rich_markdown routes the body to sendRichMessage as markdown" do
@@ -148,6 +160,20 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
       assert payload["disable_notification"] == true
       assert payload["message_thread_id"] == 5
     end
+
+    test "rich messages preserve generic reply routing" do
+      assert {:ok, _response} =
+               Adapter.send_message(99, @table,
+                 token: "bot-token",
+                 transport: CapturingTransport,
+                 format: :rich_markdown,
+                 reply_to_id: 42
+               )
+
+      assert_received {:sent, "bot-token", "sendRichMessage", payload, _opts}
+      assert payload["reply_parameters"] == %{"message_id" => 42}
+      refute Map.has_key?(payload, "reply_to_message_id")
+    end
   end
 
   describe "SendOptions" do
@@ -177,6 +203,20 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
     test "caption options keep MarkdownV2 for markdown" do
       assert PhotoOptions.new(format: :markdown).parse_mode == "MarkdownV2"
       assert DocumentOptions.new(format: "markdown").parse_mode == "MarkdownV2"
+    end
+
+    test "rejects invalid explicit rich formats" do
+      assert_raise Jido.Chat.Errors.Validation, fn ->
+        SendOptions.new(rich_format: "bogus")
+      end
+
+      assert_raise Jido.Chat.Errors.Validation, fn ->
+        EditOptions.new(rich_format: :bogus)
+      end
+
+      assert_raise Jido.Chat.Errors.Validation, fn ->
+        StreamOptions.new(rich_format: "bogus")
+      end
     end
   end
 
@@ -251,6 +291,28 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
       assert opts.rich_format == nil
       refute Keyword.has_key?(StreamOptions.send_opts(opts), :rich_format)
     end
+
+    test "uses rich draft updates for a rich stream" do
+      assert {:ok, _response} =
+               Adapter.stream(99, ["| A |", " B |"],
+                 token: "bot-token",
+                 transport: CapturingTransport,
+                 stream_update_interval_ms: 0,
+                 draft_id: 7,
+                 format: :rich_markdown
+               )
+
+      assert_received {:sent, "bot-token", "sendRichMessageDraft", first_payload, _opts}
+      assert first_payload["draft_id"] == 7
+      assert first_payload["rich_message"] == %{"markdown" => "| A |"}
+      refute Map.has_key?(first_payload, "text")
+
+      assert_received {:sent, "bot-token", "sendRichMessageDraft", second_payload, _opts}
+      assert second_payload["rich_message"] == %{"markdown" => "| A | B |"}
+
+      assert_received {:sent, "bot-token", "sendRichMessage", final_payload, _opts}
+      assert final_payload["rich_message"] == %{"markdown" => "| A | B |"}
+    end
   end
 
   describe "ParseMode.resolve_rich_format/1" do
@@ -314,6 +376,22 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
       assert rich_message.markdown == @table
       assert rich_message.html == nil
       assert opts[:disable_notification] == true
+    end
+
+    test "builds ReplyParameters for a rich reply" do
+      ExGramClient.call(
+        "bot-token",
+        "sendRichMessage",
+        %{
+          "chat_id" => 99,
+          "rich_message" => %{"markdown" => @table},
+          "reply_parameters" => %{"message_id" => 42}
+        },
+        ex_gram_module: CapturingExGram
+      )
+
+      assert_received {:ex_gram_rich, 99, %InputRichMessage{}, opts}
+      assert %ReplyParameters{message_id: 42} = opts[:reply_parameters]
     end
 
     test "passes an already-built InputRichMessage through untouched" do
