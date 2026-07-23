@@ -350,7 +350,8 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
   def call(_token, method, _payload, _opts), do: {:error, {:unsupported_method, method}}
 
   defp atomize_payload(payload) when is_map(payload) do
-    Enum.reduce(payload, %{}, fn
+    payload
+    |> Enum.reduce(%{}, fn
       {key, value}, acc when is_atom(key) ->
         Map.put(acc, key, value)
 
@@ -360,6 +361,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
           :error -> acc
         end
     end)
+    |> normalize_message_ids()
   end
 
   defp build_rich_message(%InputRichMessage{} = rich_message), do: rich_message
@@ -389,11 +391,37 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
 
   defp build_reply_parameters(%{reply_parameters: reply_parameters} = params)
        when is_map(reply_parameters) do
-    message_id = Map.get(reply_parameters, :message_id) || Map.get(reply_parameters, "message_id")
+    message_id =
+      reply_parameters
+      |> then(&(Map.get(&1, :message_id) || Map.get(&1, "message_id")))
+      |> normalize_integer_id()
+
     Map.put(params, :reply_parameters, %ReplyParameters{message_id: message_id})
   end
 
   defp build_reply_parameters(params), do: params
+
+  defp normalize_message_ids(params) do
+    params
+    |> normalize_message_id(:message_id)
+    |> normalize_message_id(:reply_to_message_id)
+  end
+
+  defp normalize_message_id(params, key) do
+    case Map.fetch(params, key) do
+      {:ok, value} -> Map.put(params, key, normalize_integer_id(value))
+      :error -> params
+    end
+  end
+
+  defp normalize_integer_id(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, ""} -> integer
+      _ -> value
+    end
+  end
+
+  defp normalize_integer_id(value), do: value
 
   defp ex_gram_module(opts), do: Keyword.get(opts, :ex_gram_module, ExGram)
 

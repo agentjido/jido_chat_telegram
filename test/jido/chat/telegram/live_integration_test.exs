@@ -103,6 +103,88 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
     assert :ok = Adapter.delete_message(ctx.chat_id, message_id, ctx.opts)
   end
 
+  test "rich send, reply, edit, and stream succeed against live Telegram Bot API", ctx do
+    timestamp = System.system_time(:millisecond)
+
+    assert {:ok, root} =
+             Adapter.send_message(
+               ctx.chat_id,
+               "jido rich integration root #{timestamp}",
+               ctx.opts
+             )
+
+    root_id = message_id(root)
+
+    on_exit(fn ->
+      cleanup_delete(fn ->
+        Adapter.delete_message(ctx.chat_id, root_id, ctx.opts)
+      end)
+    end)
+
+    markdown = """
+    ## Jido rich integration
+
+    | Check | Result |
+    | --- | --- |
+    | send | pass |
+    """
+
+    assert {:ok, reply} =
+             Adapter.send_message(
+               ctx.chat_id,
+               markdown,
+               Keyword.merge(ctx.opts, format: :rich_markdown, reply_to_id: root_id)
+             )
+
+    reply_id = message_id(reply)
+
+    on_exit(fn ->
+      cleanup_delete(fn ->
+        Adapter.delete_message(ctx.chat_id, reply_id, ctx.opts)
+      end)
+    end)
+
+    assert map_get(reply.raw, [:rich_message, "rich_message"])
+
+    assert to_string(
+             reply.raw
+             |> map_get([:reply_to_message, "reply_to_message"])
+             |> map_get([:message_id, "message_id"])
+           ) == root_id
+
+    assert {:ok, edited} =
+             Adapter.edit_message(
+               ctx.chat_id,
+               reply_id,
+               "<h2>Jido rich integration</h2><p>Edit passed.</p>",
+               Keyword.put(ctx.opts, :format, :rich_html)
+             )
+
+    assert message_id(edited) == reply_id
+    assert map_get(edited.raw, [:rich_message, "rich_message"])
+
+    assert {:ok, streamed} =
+             Adapter.stream(
+               ctx.chat_id,
+               ["## Jido rich stream", "\n\nStream completed."],
+               Keyword.merge(ctx.opts,
+                 draft_id: System.unique_integer([:positive]),
+                 stream_update_interval_ms: 0,
+                 format: :rich_markdown
+               )
+             )
+
+    streamed_id = message_id(streamed)
+
+    on_exit(fn ->
+      cleanup_delete(fn ->
+        Adapter.delete_message(ctx.chat_id, streamed_id, ctx.opts)
+      end)
+    end)
+
+    assert map_get(streamed.raw, [:rich_message, "rich_message"])
+  end
+
   test "reply continuity preserves reply_to metadata and optional topic routing", ctx do
     root_text = "jido telegram reply root #{System.system_time(:millisecond)}"
     reply_text = "jido telegram reply child #{System.system_time(:millisecond)}"

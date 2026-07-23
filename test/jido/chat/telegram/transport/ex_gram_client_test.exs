@@ -134,6 +134,19 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
     assert Keyword.get(opts, :adapter) == ExGramAdapter
   end
 
+  test "call/4 normalizes numeric string message ids for ExGram" do
+    assert {:ok, true} =
+             ExGramClient.call(
+               "abc",
+               "editMessageText",
+               %{"chat_id" => 1, "message_id" => "7", "text" => "updated"},
+               ex_gram_module: MockExGram
+             )
+
+    assert_received {:edit_message_text, "updated", opts}
+    assert Keyword.get(opts, :message_id) == 7
+  end
+
   test "call/4 dispatches deleteMessage via ExGram" do
     assert {:ok, true} =
              ExGramClient.call(

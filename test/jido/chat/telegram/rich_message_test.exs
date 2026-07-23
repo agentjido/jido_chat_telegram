@@ -385,7 +385,7 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
         %{
           "chat_id" => 99,
           "rich_message" => %{"markdown" => @table},
-          "reply_parameters" => %{"message_id" => 42}
+          "reply_parameters" => %{"message_id" => "42"}
         },
         ex_gram_module: CapturingExGram
       )
