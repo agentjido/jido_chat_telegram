@@ -12,8 +12,10 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
 
   alias ExGram.Model.InputRichMessage
   alias Jido.Chat.Telegram.Adapter
+  alias Jido.Chat.Telegram.DocumentOptions
   alias Jido.Chat.Telegram.EditOptions
   alias Jido.Chat.Telegram.ParseMode
+  alias Jido.Chat.Telegram.PhotoOptions
   alias Jido.Chat.Telegram.SendOptions
   alias Jido.Chat.Telegram.StreamOptions
   alias Jido.Chat.Telegram.Transport.ExGramClient
@@ -85,6 +87,36 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
       assert payload["chat_id"] == 99
     end
 
+    # Callers speak plain `:markdown` — mapping it to rich delivery here is what keeps
+    # Telegram's `sendRichMessage`/MarkdownV2 split an adapter concern.
+    test "format: :markdown routes the body to sendRichMessage as markdown" do
+      assert {:ok, _response} =
+               Adapter.send_message(99, @table,
+                 token: "bot-token",
+                 transport: CapturingTransport,
+                 format: :markdown
+               )
+
+      assert_received {:sent, "bot-token", "sendRichMessage", payload, _opts}
+      assert payload["rich_message"] == %{"markdown" => @table}
+      refute Map.has_key?(payload, "parse_mode")
+    end
+
+    test "format: :markdown with an explicit parse_mode still uses sendMessage" do
+      assert {:ok, _response} =
+               Adapter.send_message(99, @table,
+                 token: "bot-token",
+                 transport: CapturingTransport,
+                 format: :markdown,
+                 parse_mode: "MarkdownV2"
+               )
+
+      assert_received {:sent, "bot-token", "sendMessage", payload, _opts}
+      assert payload["text"] == @table
+      assert payload["parse_mode"] == "MarkdownV2"
+      refute Map.has_key?(payload, "rich_message")
+    end
+
     test "format: :rich_html routes the body to sendRichMessage as html" do
       assert {:ok, _response} =
                Adapter.send_message(99, "<b>hi</b>",
@@ -127,6 +159,24 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
     test "an explicit rich_format wins over an inferred one" do
       assert %SendOptions{rich_format: :html} =
                SendOptions.new(format: :rich_markdown, rich_format: :html)
+    end
+
+    test "plain markdown resolves to rich without a parse_mode" do
+      assert %SendOptions{rich_format: :markdown, parse_mode: nil} =
+               SendOptions.new(format: :markdown)
+
+      assert %EditOptions{rich_format: :markdown, parse_mode: nil} =
+               EditOptions.new(format: "markdown")
+
+      assert %StreamOptions{rich_format: :markdown, parse_mode: nil} =
+               StreamOptions.new(format: :markdown)
+    end
+
+    # `sendPhoto`/`sendDocument` captions have no rich variant, so markdown captions
+    # keep the MarkdownV2 parse_mode instead of silently shipping raw markup.
+    test "caption options keep MarkdownV2 for markdown" do
+      assert PhotoOptions.new(format: :markdown).parse_mode == "MarkdownV2"
+      assert DocumentOptions.new(format: "markdown").parse_mode == "MarkdownV2"
     end
   end
 
@@ -212,9 +262,30 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
       assert ParseMode.resolve_rich_format(%{format: "rich_html"}) == :html
     end
 
+    # Plain markdown belongs here, not on MarkdownV2: MarkdownV2 is a Telegram subset
+    # with no tables, headings, or nested lists, so a caller asking for markdown gets
+    # the renderer that can actually express it.
+    test "maps plain markdown to rich delivery" do
+      assert ParseMode.resolve_rich_format(%{format: :markdown}) == :markdown
+      assert ParseMode.resolve_rich_format(%{format: "markdown"}) == :markdown
+    end
+
+    test "an explicit parse_mode opts markdown back out to sendMessage" do
+      assert ParseMode.resolve_rich_format(%{format: :markdown, parse_mode: "MarkdownV2"}) == nil
+      assert ParseMode.resolve_rich_format(%{"format" => "markdown", "parse_mode" => "HTML"}) == nil
+
+      assert ParseMode.resolve_from_opts(%{format: :markdown, parse_mode: "MarkdownV2"}) ==
+               "MarkdownV2"
+    end
+
+    # An explicitly requested rich format is not an inference, so parse_mode cannot veto it.
+    test "an explicit parse_mode does not suppress an explicit rich format" do
+      assert ParseMode.resolve_rich_format(%{format: :rich_markdown, parse_mode: "HTML"}) ==
+               :markdown
+    end
+
     test "ignores non-rich and unknown formats" do
       assert ParseMode.resolve_rich_format(%{format: :html}) == nil
-      assert ParseMode.resolve_rich_format(%{format: :markdown}) == nil
       assert ParseMode.resolve_rich_format(%{format: :plain_text}) == nil
       assert ParseMode.resolve_rich_format(%{}) == nil
     end

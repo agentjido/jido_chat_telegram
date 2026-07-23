@@ -234,16 +234,18 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert result.date == 1_706_745_600
   end
 
+  # `format: :markdown` resolves to a rich message rather than a parse_mode — that
+  # routing is covered in `RichMessageTest`.
   test "send_message/3 infers parse_mode from top-level format" do
     assert {:ok, _result} =
              Adapter.send_message(123, "hello",
                token: "bot-token",
                transport: MockTransport,
-               format: :markdown
+               format: :html
              )
 
     assert_received {:transport_call, "bot-token", "sendMessage", payload}
-    assert payload["parse_mode"] == "MarkdownV2"
+    assert payload["parse_mode"] == "HTML"
   end
 
   test "send_message/3 keeps explicit parse_mode over top-level format" do
@@ -322,17 +324,17 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
                transport: MockTransport,
                stream_update_interval_ms: 0,
                draft_id: 7,
-               format: :markdown
+               format: :html
              )
 
     assert_received {:transport_call, "bot-token", "sendMessageDraft", first_payload}
-    assert first_payload["parse_mode"] == "MarkdownV2"
+    assert first_payload["parse_mode"] == "HTML"
 
     assert_received {:transport_call, "bot-token", "sendMessageDraft", second_payload}
-    assert second_payload["parse_mode"] == "MarkdownV2"
+    assert second_payload["parse_mode"] == "HTML"
 
     assert_received {:transport_call, "bot-token", "sendMessage", final_payload}
-    assert final_payload["parse_mode"] == "MarkdownV2"
+    assert final_payload["parse_mode"] == "HTML"
   end
 
   test "adapter stream skips duplicate partial draft updates" do

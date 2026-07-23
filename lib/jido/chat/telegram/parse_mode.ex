@@ -19,6 +19,10 @@ defmodule Jido.Chat.Telegram.ParseMode do
   - `:plain_text` / `"plain_text"` -> `nil`
 
   Unknown values are ignored and return `nil`.
+
+  Methods that support rich messages resolve `resolve_rich_format/1` first and skip
+  `parse_mode` entirely when it returns a format; captions (`sendPhoto`,
+  `sendDocument`) have no rich variant and always land here.
   """
   @spec resolve_from_opts(map()) :: String.t() | nil
   def resolve_from_opts(opts) when is_map(opts) do
@@ -42,8 +46,15 @@ defmodule Jido.Chat.Telegram.ParseMode do
 
   Supported `format` mappings:
 
-  - `:rich` / `:rich_markdown` -> `:markdown`
+  - `:markdown` / `:rich` / `:rich_markdown` -> `:markdown`
   - `:rich_html` -> `:html`
+
+  Plain `:markdown` maps here, not to `"MarkdownV2"`: `MarkdownV2` is a Telegram
+  subset that cannot express tables, headings, or nested lists, so callers asking
+  for markdown get the renderer that handles all of it. Callers that specifically
+  want the `sendMessage` subset opt out with an explicit `parse_mode` — that
+  suppresses the inference, while an explicitly requested `:rich_*` format still
+  wins.
 
   An explicit `rich_format` option wins over an inferred one.
   """
@@ -65,7 +76,18 @@ defmodule Jido.Chat.Telegram.ParseMode do
     case Map.get(opts, :format) || Map.get(opts, "format") do
       format when format in [:rich, "rich", :rich_markdown, "rich_markdown"] -> :markdown
       format when format in [:rich_html, "rich_html"] -> :html
+      format when format in [:markdown, "markdown"] -> markdown_unless_parse_mode(opts)
       _ -> nil
+    end
+  end
+
+  # An explicit `parse_mode` is the opt-out back to `sendMessage`. Option modules must
+  # therefore resolve the rich format before normalizing `parse_mode`, or an inferred
+  # `"MarkdownV2"` would look like a caller opting out of rich delivery.
+  defp markdown_unless_parse_mode(opts) do
+    case explicit_parse_mode(opts) do
+      nil -> :markdown
+      _parse_mode -> nil
     end
   end
 

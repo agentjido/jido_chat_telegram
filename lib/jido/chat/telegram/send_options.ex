@@ -45,8 +45,8 @@ defmodule Jido.Chat.Telegram.SendOptions do
 
   def new(opts) when is_map(opts) do
     opts
-    |> normalize_parse_mode()
     |> normalize_rich_format()
+    |> normalize_parse_mode()
     |> normalize_generic_reply_and_thread()
     |> then(&Jido.Chat.Schema.parse!(__MODULE__, @schema, &1))
   end
@@ -98,6 +98,11 @@ defmodule Jido.Chat.Telegram.SendOptions do
 
   defp maybe_kw(keyword, _key, nil), do: keyword
   defp maybe_kw(keyword, key, value), do: Keyword.put(keyword, key, value)
+
+  # Rich messages are parsed server-side: `parse_mode` is not a valid `sendRichMessage`
+  # option and is dropped from the payload, so inferring one here would only mislead.
+  defp normalize_parse_mode(%{rich_format: rich_format} = opts) when not is_nil(rich_format),
+    do: opts
 
   defp normalize_parse_mode(opts) do
     case ParseMode.resolve_from_opts(opts) do

@@ -108,10 +108,12 @@ defmodule Jido.Chat.Telegram.OptionsTest do
     assert [debug: true] = ReactionOptions.transport_opts(options)
   end
 
+  # Message sends resolve `format: :markdown` to a rich message instead of a parse_mode
+  # (see `RichMessageTest`); captions, which have no rich variant, still map to MarkdownV2.
   test "option modules infer parse_mode from top-level format" do
-    assert SendOptions.new(format: :markdown).parse_mode == "MarkdownV2"
+    assert SendOptions.new(format: :html).parse_mode == "HTML"
     assert EditOptions.new(format: :html).parse_mode == "HTML"
-    assert StreamOptions.new(format: "markdown").parse_mode == "MarkdownV2"
+    assert StreamOptions.new(format: "html").parse_mode == "HTML"
     assert PhotoOptions.new(format: "html").parse_mode == "HTML"
     assert DocumentOptions.new(format: "markdown").parse_mode == "MarkdownV2"
   end
