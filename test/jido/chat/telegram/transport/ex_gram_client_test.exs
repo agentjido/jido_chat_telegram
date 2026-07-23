@@ -134,6 +134,19 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
     assert Keyword.get(opts, :adapter) == ExGramAdapter
   end
 
+  test "call/4 normalizes numeric string message ids for ExGram" do
+    assert {:ok, true} =
+             ExGramClient.call(
+               "abc",
+               "editMessageText",
+               %{"chat_id" => 1, "message_id" => "7", "text" => "updated"},
+               ex_gram_module: MockExGram
+             )
+
+    assert_received {:edit_message_text, "updated", opts}
+    assert Keyword.get(opts, :message_id) == 7
+  end
+
   test "call/4 dispatches deleteMessage via ExGram" do
     assert {:ok, true} =
              ExGramClient.call(
@@ -278,6 +291,28 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
     assert body.text == "hello"
     assert body.parse_mode == "Markdown"
     assert body.entities == [%{"type" => "bold", "offset" => 0, "length" => 5}]
+    assert opts == []
+  end
+
+  test "call/4 dispatches sendRichMessageDraft via the configured HTTP adapter" do
+    assert {:ok, true} =
+             ExGramClient.call(
+               "abc",
+               "sendRichMessageDraft",
+               %{
+                 "chat_id" => 1,
+                 "message_thread_id" => 9,
+                 "draft_id" => 77,
+                 "rich_message" => %{"markdown" => "| A | B |"}
+               },
+               ex_gram_adapter: MockHttpAdapter
+             )
+
+    assert_received {:http_request, :post, "/botabc/sendRichMessageDraft", body, opts}
+    assert body.chat_id == 1
+    assert body.message_thread_id == 9
+    assert body.draft_id == 77
+    assert body.rich_message == %{"markdown" => "| A | B |"}
     assert opts == []
   end
 

@@ -5,7 +5,14 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
 
   @behaviour Jido.Chat.Telegram.Transport
 
-  alias ExGram.Model.{ReactionTypeCustomEmoji, ReactionTypeEmoji, ReactionTypePaid}
+  alias ExGram.Model.{
+    InputRichMessage,
+    ReactionTypeCustomEmoji,
+    ReactionTypeEmoji,
+    ReactionTypePaid,
+    ReplyParameters
+  }
+
   alias Jido.Chat.Telegram.ExGramAdapter
 
   @adapter_opt_keys [
@@ -34,6 +41,8 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     "max_connections" => :max_connections,
     "secret_token" => :secret_token,
     "text" => :text,
+    "rich_message" => :rich_message,
+    "protect_content" => :protect_content,
     "draft_id" => :draft_id,
     "caption" => :caption,
     "photo" => :photo,
@@ -48,6 +57,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     "cache_time" => :cache_time,
     "parse_mode" => :parse_mode,
     "reply_to_message_id" => :reply_to_message_id,
+    "reply_parameters" => :reply_parameters,
     "disable_notification" => :disable_notification,
     "reply_markup" => :reply_markup,
     "disable_web_page_preview" => :disable_web_page_preview,
@@ -69,15 +79,48 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     )
   end
 
-  def call(token, "editMessageText", payload, opts) do
+  def call(token, "sendRichMessage", payload, opts) do
     params = atomize_payload(payload)
-    text = Map.fetch!(params, :text)
-    method_opts = params |> Map.drop([:text]) |> Map.to_list()
+    chat_id = Map.fetch!(params, :chat_id)
+    rich_message = params |> Map.fetch!(:rich_message) |> build_rich_message()
 
-    ex_gram_module(opts).edit_message_text(
-      text,
+    method_opts =
+      params
+      |> Map.drop([:chat_id, :rich_message])
+      |> build_reply_parameters()
+      |> Map.to_list()
+
+    ex_gram_module(opts).send_rich_message(
+      chat_id,
+      rich_message,
       method_opts ++ ex_gram_runtime_opts(token, opts)
     )
+  end
+
+  def call(token, "editMessageText", payload, opts) do
+    params = atomize_payload(payload)
+
+    # Bot API 10.1 made `text` optional — a message can be edited into rich content
+    # instead, in which case the body travels as `rich_message`.
+    case Map.fetch(params, :rich_message) do
+      {:ok, rich_message} ->
+        method_opts =
+          params
+          |> Map.drop([:rich_message])
+          |> Map.put(:rich_message, build_rich_message(rich_message))
+          |> Map.to_list()
+
+        ex_gram_module(opts).edit_message_text(method_opts ++ ex_gram_runtime_opts(token, opts))
+
+      :error ->
+        text = Map.fetch!(params, :text)
+        method_opts = params |> Map.drop([:text]) |> Map.to_list()
+
+        ex_gram_module(opts).edit_message_text(
+          text,
+          method_opts ++ ex_gram_runtime_opts(token, opts)
+        )
+    end
   end
 
   def call(token, "sendMessageDraft", payload, opts) do
@@ -85,6 +128,19 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     adapter = ex_gram_http_adapter(opts)
 
     request_adapter(adapter, :post, build_path(token, "sendMessageDraft"), params, direct_adapter_request_opts(opts))
+  end
+
+  def call(token, "sendRichMessageDraft", payload, opts) do
+    params = atomize_payload(payload)
+    adapter = ex_gram_http_adapter(opts)
+
+    request_adapter(
+      adapter,
+      :post,
+      build_path(token, "sendRichMessageDraft"),
+      params,
+      direct_adapter_request_opts(opts)
+    )
   end
 
   def call(token, "deleteMessage", payload, opts) do
@@ -294,7 +350,8 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
   def call(_token, method, _payload, _opts), do: {:error, {:unsupported_method, method}}
 
   defp atomize_payload(payload) when is_map(payload) do
-    Enum.reduce(payload, %{}, fn
+    payload
+    |> Enum.reduce(%{}, fn
       {key, value}, acc when is_atom(key) ->
         Map.put(acc, key, value)
 
@@ -304,7 +361,67 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
           :error -> acc
         end
     end)
+    |> normalize_message_ids()
   end
+
+  defp build_rich_message(%InputRichMessage{} = rich_message), do: rich_message
+
+  defp build_rich_message(rich_message) when is_map(rich_message) do
+    struct(
+      InputRichMessage,
+      Enum.reduce(rich_message, %{}, fn {key, value}, acc ->
+        case rich_message_key(key) do
+          nil -> acc
+          atom_key -> Map.put(acc, atom_key, value)
+        end
+      end)
+    )
+  end
+
+  defp rich_message_key(key) when key in [:markdown, "markdown"], do: :markdown
+  defp rich_message_key(key) when key in [:html, "html"], do: :html
+  defp rich_message_key(key) when key in [:is_rtl, "is_rtl"], do: :is_rtl
+
+  defp rich_message_key(key) when key in [:skip_entity_detection, "skip_entity_detection"],
+    do: :skip_entity_detection
+
+  defp rich_message_key(_key), do: nil
+
+  defp build_reply_parameters(%{reply_parameters: %ReplyParameters{}} = params), do: params
+
+  defp build_reply_parameters(%{reply_parameters: reply_parameters} = params)
+       when is_map(reply_parameters) do
+    message_id =
+      reply_parameters
+      |> then(&(Map.get(&1, :message_id) || Map.get(&1, "message_id")))
+      |> normalize_integer_id()
+
+    Map.put(params, :reply_parameters, %ReplyParameters{message_id: message_id})
+  end
+
+  defp build_reply_parameters(params), do: params
+
+  defp normalize_message_ids(params) do
+    params
+    |> normalize_message_id(:message_id)
+    |> normalize_message_id(:reply_to_message_id)
+  end
+
+  defp normalize_message_id(params, key) do
+    case Map.fetch(params, key) do
+      {:ok, value} -> Map.put(params, key, normalize_integer_id(value))
+      :error -> params
+    end
+  end
+
+  defp normalize_integer_id(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {integer, ""} -> integer
+      _ -> value
+    end
+  end
+
+  defp normalize_integer_id(value), do: value
 
   defp ex_gram_module(opts), do: Keyword.get(opts, :ex_gram_module, ExGram)
 
