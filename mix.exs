@@ -1,7 +1,7 @@
 defmodule Jido.Chat.Telegram.MixProject do
   use Mix.Project
 
-  @version "1.1.0"
+  @version "1.2.0"
   @source_url "https://github.com/agentjido/jido_chat_telegram"
   @description "Telegram adapter package for Jido.Chat"
 

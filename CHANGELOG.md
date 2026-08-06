@@ -12,6 +12,19 @@ Initial Hex release of `jido_chat_telegram`.
 
 <!-- changelog -->
 
+## [v1.2.0](https://github.com/agentjido/jido_chat_telegram/compare/v1.1.0...v1.2.0) (2026-08-06)
+
+
+
+
+### Features:
+
+* telegram: expose fetch_media/2 and read photo captions as message text (#31) by Jad Tarabay
+
+* telegram: add rich message support via sendRichMessage (#28) by Jad Tarabay
+
+* support Telegram file downloads (#26) by mikehostetler
+
 ## [v1.1.0](https://github.com/agentjido/jido_chat_telegram/compare/v1.0.0...v1.1.0) (2026-05-28)
 
 
