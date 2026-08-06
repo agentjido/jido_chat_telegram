@@ -71,6 +71,18 @@ defmodule Jido.Chat.Telegram.Adapter do
   @spec extension_capabilities() :: map()
   def extension_capabilities, do: Jido.Chat.Telegram.Extensions.capabilities()
 
+  @doc """
+  Fetches the bytes behind an inbound media reference.
+
+  Accepts a raw Telegram file id, a `telegram://file/<file_id>` reference, or a normalized
+  media value carrying either form — the `telegram://` scheme is minted here, so it is
+  resolved here rather than by the caller.
+  """
+  @spec fetch_media(String.t() | map(), keyword() | map()) ::
+          {:ok, binary()} | {:error, term()}
+  @impl true
+  defdelegate fetch_media(reference, opts \\ []), to: Extensions, as: :download_file
+
   @impl true
   def listener_child_specs(bridge_id, opts \\ []) when is_binary(bridge_id) and is_list(opts) do
     ingress = Ingress.normalize_opts(opts)
@@ -875,7 +887,9 @@ defmodule Jido.Chat.Telegram.Adapter do
      Incoming.new(%{
        external_room_id: map_get(chat, [:id, "id"]),
        external_user_id: map_get(from, [:id, "id"]),
-       text: map_get(message, [:text, "text"]),
+       # A photo or document carries the sender's words in `caption`, never in `text` —
+       # Telegram sets one or the other, so the caption is the message text.
+       text: map_get(message, [:text, "text"]) || map_get(message, [:caption, "caption"]),
        media: extract_media(message),
        username: map_get(from, [:username, "username"]),
        display_name: map_get(from, [:first_name, "first_name"]),

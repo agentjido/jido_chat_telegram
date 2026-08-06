@@ -208,6 +208,67 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert [%{kind: :image, url: "telegram://file/photo-large"}] = incoming.media
   end
 
+  test "transform_incoming/1 reads a photo caption as the message text" do
+    update = %{
+      "message" => %{
+        "message_id" => 457,
+        "date" => 1_706_745_600,
+        "chat" => %{"id" => 789, "type" => "private"},
+        "photo" => [%{"file_id" => "photo-large"}],
+        "caption" => "what is wrong with this chart?"
+      }
+    }
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+    assert incoming.text == "what is wrong with this chart?"
+    assert [%{kind: :image}] = incoming.media
+  end
+
+  test "transform_incoming/1 leaves text nil for a caption-less photo" do
+    update = %{
+      "message" => %{
+        "message_id" => 458,
+        "date" => 1_706_745_600,
+        "chat" => %{"id" => 789, "type" => "private"},
+        "photo" => [%{"file_id" => "photo-large"}]
+      }
+    }
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+    assert incoming.text == nil
+  end
+
+  test "transform_incoming/1 prefers text over caption when a message somehow has both" do
+    update = %{
+      "message" => %{
+        "message_id" => 459,
+        "date" => 1_706_745_600,
+        "chat" => %{"id" => 789, "type" => "private"},
+        "text" => "the text",
+        "caption" => "the caption"
+      }
+    }
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+    assert incoming.text == "the text"
+  end
+
+  test "transform_incoming/1 reads a document caption too" do
+    update = %{
+      "message" => %{
+        "message_id" => 460,
+        "date" => 1_706_745_600,
+        "chat" => %{"id" => 789, "type" => "private"},
+        "document" => %{"file_id" => "doc-1", "mime_type" => "application/pdf"},
+        "caption" => "please summarise this"
+      }
+    }
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+    assert incoming.text == "please summarise this"
+    assert [%{kind: :file}] = incoming.media
+  end
+
   test "transform_incoming/1 errors for missing/unsupported updates" do
     assert {:error, :no_message} = Adapter.transform_incoming(%{"message" => nil})
 

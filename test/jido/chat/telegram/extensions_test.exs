@@ -122,6 +122,27 @@ defmodule Jido.Chat.Telegram.ExtensionsTest do
     assert Keyword.get(request_opts, :decode_body) == false
   end
 
+  test "Adapter.fetch_media/2 downloads bytes for a Telegram reference" do
+    assert {:ok, "file contents"} =
+             Jido.Chat.Telegram.Adapter.fetch_media("telegram://file/telegram-file-id",
+               token: "bot-token",
+               transport: MockTransport,
+               adapter_opts: [url: "http://localhost:8081"],
+               http_client: MockHttpClient
+             )
+
+    assert_received {:download, "http://localhost:8081/file/botbot-token/documents/telegram-file-id.txt", _request_opts}
+  end
+
+  test "Adapter.fetch_media/2 propagates download errors" do
+    assert {:error, {:file_download_failed, 404}} =
+             Jido.Chat.Telegram.Adapter.fetch_media("http-error",
+               token: "bot-token",
+               transport: MockTransport,
+               http_client: MockHttpClient
+             )
+  end
+
   test "get_file/2 rejects empty and unsupported references" do
     assert {:error, :invalid_file_reference} =
              Extensions.get_file(%{}, token: "bot-token", transport: MockTransport)
