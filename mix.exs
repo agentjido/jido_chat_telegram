@@ -57,7 +57,7 @@ defmodule Jido.Chat.Telegram.MixProject do
 
   defp deps do
     [
-      {:jido_chat, "~> 1.0"},
+      {:jido_chat, "~> 1.1"},
       {:ex_gram, "~> 0.67"},
       {:req, "~> 0.7.1", override: true},
       {:jason, "~> 1.4"},
