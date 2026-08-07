@@ -12,6 +12,15 @@ Initial Hex release of `jido_chat_telegram`.
 
 <!-- changelog -->
 
+## [v1.2.1](https://github.com/agentjido/jido_chat_telegram/compare/v1.2.0...v1.2.1) (2026-08-07)
+
+
+
+
+### Bug Fixes:
+
+* remove Req dependency override by mikehostetler
+
 ## [v1.2.0](https://github.com/agentjido/jido_chat_telegram/compare/v1.1.0...v1.2.0) (2026-08-06)
 
 
