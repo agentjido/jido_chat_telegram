@@ -1062,17 +1062,24 @@ defmodule Jido.Chat.Telegram.Adapter do
 
   defp extract_media(message) when is_map(message) do
     photos = map_get(message, [:photo, "photo"])
+    sticker = map_get(message, [:sticker, "sticker"])
+    animation = map_get(message, [:animation, "animation"])
     audio = map_get(message, [:audio, "audio"])
     voice = map_get(message, [:voice, "voice"])
     video = map_get(message, [:video, "video"])
+    video_note = map_get(message, [:video_note, "video_note"])
     document = map_get(message, [:document, "document"])
 
     []
     |> maybe_append_photo(photos)
+    |> maybe_append_sticker(sticker)
+    |> maybe_append_media(:file, animation)
     |> maybe_append_media(:audio, audio)
     |> maybe_append_media(:audio, voice)
     |> maybe_append_media(:video, video)
+    |> maybe_append_media(:video, video_note)
     |> maybe_append_media(:file, document)
+    |> Enum.uniq_by(& &1.url)
   end
 
   defp maybe_append_photo(media, photos) when is_list(photos) and photos != [] do
@@ -1085,6 +1092,19 @@ defmodule Jido.Chat.Telegram.Adapter do
   end
 
   defp maybe_append_photo(media, _), do: media
+
+  defp maybe_append_sticker(media, sticker) when is_map(sticker) do
+    kind =
+      cond do
+        map_get(sticker, [:is_video, "is_video"]) == true -> :video
+        map_get(sticker, [:is_animated, "is_animated"]) == true -> :file
+        true -> :image
+      end
+
+    maybe_append_media(media, kind, sticker)
+  end
+
+  defp maybe_append_sticker(media, _), do: media
 
   defp maybe_append_media(media, kind, value) do
     case normalize_telegram_media(kind, value) do
@@ -1112,9 +1132,10 @@ defmodule Jido.Chat.Telegram.Adapter do
         media_type: media_type,
         filename: map_get(media, [:file_name, "file_name"]),
         size_bytes: map_get(media, [:file_size, "file_size"]),
-        width: map_get(media, [:width, "width"]),
-        height: map_get(media, [:height, "height"]),
-        duration: map_get(media, [:duration, "duration"])
+        width: map_get(media, [:width, "width", :length, "length"]),
+        height: map_get(media, [:height, "height", :length, "length"]),
+        duration: map_get(media, [:duration, "duration"]),
+        metadata: telegram_media_metadata(media)
       }
       |> Enum.reject(fn {_k, v} -> is_nil(v) end)
       |> Map.new()
@@ -1122,6 +1143,24 @@ defmodule Jido.Chat.Telegram.Adapter do
   end
 
   defp normalize_telegram_media(_kind, _), do: nil
+
+  defp telegram_media_metadata(media) do
+    telegram =
+      %{
+        file_unique_id: map_get(media, [:file_unique_id, "file_unique_id"]),
+        type: map_get(media, [:type, "type"]),
+        is_animated: map_get(media, [:is_animated, "is_animated"]),
+        is_video: map_get(media, [:is_video, "is_video"]),
+        emoji: map_get(media, [:emoji, "emoji"]),
+        set_name: map_get(media, [:set_name, "set_name"]),
+        custom_emoji_id: map_get(media, [:custom_emoji_id, "custom_emoji_id"]),
+        needs_repainting: map_get(media, [:needs_repainting, "needs_repainting"])
+      }
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      |> Map.new()
+
+    if telegram == %{}, do: %{}, else: %{telegram: telegram}
+  end
 
   defp normalize_file_ref(nil), do: nil
   defp normalize_file_ref(value) when is_binary(value), do: "telegram://file/#{value}"
@@ -1157,7 +1196,13 @@ defmodule Jido.Chat.Telegram.Adapter do
   defp map_get(nil, _keys), do: nil
 
   defp map_get(map, keys) when is_map(map) and is_list(keys) do
-    Enum.find_value(keys, fn key -> Map.get(map, key) end)
+    Enum.reduce_while(keys, nil, fn key, _acc ->
+      case Map.fetch(map, key) do
+        {:ok, nil} -> {:cont, nil}
+        {:ok, value} -> {:halt, value}
+        :error -> {:cont, nil}
+      end
+    end)
   end
 
   defp map_get(_other, _keys), do: nil
