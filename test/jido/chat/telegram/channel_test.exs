@@ -208,6 +208,180 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert [%{kind: :image, url: "telegram://file/photo-large"}] = incoming.media
   end
 
+  test "transform_incoming/1 extracts a static sticker with Telegram metadata" do
+    update = %{
+      "message" => %{
+        "message_id" => 457,
+        "date" => 1_706_745_600,
+        "chat" => %{"id" => 789, "type" => "private"},
+        "sticker" => %{
+          "file_id" => "sticker-webp",
+          "file_unique_id" => "unique-sticker",
+          "type" => "regular",
+          "width" => 512,
+          "height" => 512,
+          "is_animated" => false,
+          "is_video" => false,
+          "emoji" => "🦊",
+          "set_name" => "foxes",
+          "custom_emoji_id" => "custom-1",
+          "file_size" => 1_024
+        }
+      }
+    }
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+
+    assert [
+             %{
+               kind: :image,
+               url: "telegram://file/sticker-webp",
+               size_bytes: 1_024,
+               width: 512,
+               height: 512,
+               metadata: %{
+                 telegram: %{
+                   file_unique_id: "unique-sticker",
+                   type: "regular",
+                   is_animated: false,
+                   is_video: false,
+                   emoji: "🦊",
+                   set_name: "foxes",
+                   custom_emoji_id: "custom-1"
+                 }
+               }
+             }
+           ] = incoming.media
+  end
+
+  test "transform_incoming/1 classifies animated and video sticker formats" do
+    cases = [
+      {%{"is_animated" => true, "is_video" => false}, :file},
+      {%{is_animated: false, is_video: true}, :video}
+    ]
+
+    for {format, expected_kind} <- cases do
+      update = %{
+        message: %{
+          message_id: 457,
+          chat: %{id: 789, type: "private"},
+          sticker:
+            Map.merge(
+              %{
+                file_id: "sticker-#{expected_kind}",
+                width: 512,
+                height: 512
+              },
+              format
+            )
+        }
+      }
+
+      assert {:ok, incoming} = Adapter.transform_incoming(update)
+      assert [%{kind: ^expected_kind}] = incoming.media
+    end
+  end
+
+  test "transform_incoming/1 accepts ExGram update and message structs" do
+    message = %ExGram.Model.Message{
+      message_id: 458,
+      date: 1_706_745_600,
+      chat: %ExGram.Model.Chat{id: 789, type: "private"},
+      from: %ExGram.Model.User{id: 111, is_bot: false, first_name: "Jane"},
+      sticker: %ExGram.Model.Sticker{
+        file_id: "struct-sticker",
+        file_unique_id: "struct-sticker-unique",
+        type: "regular",
+        width: 512,
+        height: 512,
+        is_animated: false,
+        is_video: false
+      }
+    }
+
+    update = %ExGram.Model.Update{update_id: 10, message: message}
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+    assert [%{kind: :image, url: "telegram://file/struct-sticker"}] = incoming.media
+    refute is_struct(incoming.raw)
+    refute is_struct(incoming.raw.sticker)
+
+    chat = Chat.new(user_name: "jido", adapters: %{telegram: Adapter})
+    assert {:ok, _chat, webhook_incoming} = Adapter.handle_webhook(chat, update)
+    assert [%{kind: :image}] = webhook_incoming.media
+  end
+
+  test "transform_incoming/1 extracts an animation once when Telegram also sends its document" do
+    animation = %{
+      "file_id" => "animation-file",
+      "file_unique_id" => "unique-animation",
+      "width" => 640,
+      "height" => 360,
+      "duration" => 4,
+      "file_name" => "demo.mp4",
+      "mime_type" => "video/mp4",
+      "file_size" => 4_096
+    }
+
+    update = %{
+      "message" => %{
+        "message_id" => 458,
+        "date" => 1_706_745_600,
+        "chat" => %{"id" => 789, "type" => "private"},
+        "animation" => animation,
+        "document" => animation
+      }
+    }
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+
+    assert [
+             %{
+               kind: :video,
+               url: "telegram://file/animation-file",
+               media_type: "video/mp4",
+               filename: "demo.mp4",
+               size_bytes: 4_096,
+               width: 640,
+               height: 360,
+               duration: 4,
+               metadata: %{telegram: %{file_unique_id: "unique-animation"}}
+             }
+           ] = incoming.media
+  end
+
+  test "transform_incoming/1 extracts a video note and ignores an unsupported attachment" do
+    update = %{
+      message: %{
+        message_id: 459,
+        date: 1_706_745_600,
+        chat: %{id: 789, type: "private"},
+        video_note: %{
+          file_id: "video-note-file",
+          file_unique_id: "unique-video-note",
+          length: 240,
+          duration: 7,
+          file_size: 8_192
+        },
+        future_attachment: %{file_id: "unsupported-file"}
+      }
+    }
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+
+    assert [
+             %{
+               kind: :video,
+               url: "telegram://file/video-note-file",
+               size_bytes: 8_192,
+               width: 240,
+               height: 240,
+               duration: 7,
+               metadata: %{telegram: %{file_unique_id: "unique-video-note"}}
+             }
+           ] = incoming.media
+  end
+
   test "transform_incoming/1 reads a photo caption as the message text" do
     update = %{
       "message" => %{

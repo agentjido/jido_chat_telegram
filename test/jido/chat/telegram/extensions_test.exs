@@ -123,15 +123,32 @@ defmodule Jido.Chat.Telegram.ExtensionsTest do
   end
 
   test "Adapter.fetch_media/2 downloads bytes for a Telegram reference" do
+    assert {:ok, incoming} =
+             Jido.Chat.Telegram.Adapter.transform_incoming(%{
+               "message" => %{
+                 "message_id" => 1,
+                 "chat" => %{"id" => 2, "type" => "private"},
+                 "sticker" => %{
+                   "file_id" => "static-sticker",
+                   "width" => 512,
+                   "height" => 512,
+                   "is_animated" => false,
+                   "is_video" => false
+                 }
+               }
+             })
+
+    assert [sticker] = incoming.media
+
     assert {:ok, "file contents"} =
-             Jido.Chat.Telegram.Adapter.fetch_media("telegram://file/telegram-file-id",
+             Jido.Chat.Telegram.Adapter.fetch_media(sticker,
                token: "bot-token",
                transport: MockTransport,
                adapter_opts: [url: "http://localhost:8081"],
                http_client: MockHttpClient
              )
 
-    assert_received {:download, "http://localhost:8081/file/botbot-token/documents/telegram-file-id.txt", _request_opts}
+    assert_received {:download, "http://localhost:8081/file/botbot-token/documents/static-sticker.txt", _request_opts}
   end
 
   test "Adapter.fetch_media/2 propagates download errors" do

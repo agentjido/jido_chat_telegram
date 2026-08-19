@@ -215,6 +215,7 @@ Current live coverage in that file includes:
 - reactions, with explicit unsupported acceptance when the Bot API feature is unavailable
 - media sends through `Jido.Chat.Telegram.Extensions`
 - attachment metadata resolution and raw-byte downloads, including JSON content
+- inbound sticker, animation, and video-note normalization with media downloads
 - canonical media sends through `send_file/3` and core `post_message/4`
 - webhook-shaped ingress
 - unsupported-core contract checks

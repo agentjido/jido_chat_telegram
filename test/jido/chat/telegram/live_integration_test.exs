@@ -344,6 +344,52 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
     assert is_map(decoded)
   end
 
+  test "live Telegram media responses normalize and download", ctx do
+    ex_gram_opts = live_ex_gram_opts(ctx.token)
+
+    assert {:ok, sticker_message} =
+             ExGram.send_sticker(
+               ctx.chat_id,
+               {:file_content, live_fixture("static-sticker.webp.b64"), "jido-live-sticker.webp"},
+               ex_gram_opts
+             )
+
+    delete_after_test(sticker_message, ctx)
+    sticker = assert_live_media(sticker_message, :sticker, :image, ctx)
+    assert sticker.width == 512
+    assert sticker.height == 512
+    assert sticker.metadata.telegram.is_animated == false
+    assert sticker.metadata.telegram.is_video == false
+
+    assert {:ok, animation_message} =
+             ExGram.send_animation(
+               ctx.chat_id,
+               {:file_content, live_fixture("square-video.mp4.b64"), "jido-live-animation.mp4"},
+               ex_gram_opts
+             )
+
+    delete_after_test(animation_message, ctx)
+    assert map_get(animation_message, [:document, "document"])
+
+    animation = assert_live_media(animation_message, :animation, :video, ctx)
+    assert animation.media_type == "video/mp4"
+    assert animation.width == 240
+    assert animation.height == 240
+
+    assert {:ok, video_note_message} =
+             ExGram.send_video_note(
+               ctx.chat_id,
+               {:file_content, live_fixture("square-video.mp4.b64"), "jido-live-video-note.mp4"},
+               ex_gram_opts
+             )
+
+    delete_after_test(video_note_message, ctx)
+    video_note = assert_live_media(video_note_message, :video_note, :video, ctx)
+    assert video_note.width == 240
+    assert video_note.height == 240
+    assert video_note.duration == 1
+  end
+
   test "canonical media sends succeed through send_file and core post_message", ctx do
     photo_ref = @photo_ref || "https://httpbin.org/image/png"
 
@@ -552,6 +598,45 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       nil -> opts
       thread_id -> Keyword.put(opts, :thread_id, thread_id)
     end
+  end
+
+  defp live_ex_gram_opts(token) do
+    opts = [token: token, adapter: Jido.Chat.Telegram.ExGramAdapter]
+
+    case @thread_id do
+      nil -> opts
+      thread_id -> Keyword.put(opts, :message_thread_id, thread_id)
+    end
+  end
+
+  defp delete_after_test(message, ctx) do
+    id = message_id(message)
+
+    on_exit(fn ->
+      cleanup_delete(fn -> Adapter.delete_message(ctx.chat_id, id, ctx.opts) end)
+    end)
+  end
+
+  defp assert_live_media(message, field, expected_kind, ctx) do
+    assert map_get(message, [field, Atom.to_string(field)])
+    assert {:ok, incoming} = Adapter.transform_incoming(%{message: message})
+    assert [media] = incoming.media
+    assert media.kind == expected_kind
+    assert String.starts_with?(media.url, "telegram://file/")
+
+    assert {:ok, bytes} = Adapter.fetch_media(media, token: ctx.token)
+    assert is_binary(bytes) and byte_size(bytes) > 0
+
+    media
+  end
+
+  defp live_fixture(filename) do
+    __DIR__
+    |> Path.join("fixtures")
+    |> Path.join(filename)
+    |> File.read!()
+    |> String.replace(~r/\s/, "")
+    |> Base.decode64!()
   end
 
   defp message_id(%{message_id: value}) when not is_nil(value), do: to_string(value)
