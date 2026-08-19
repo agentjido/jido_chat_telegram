@@ -561,6 +561,8 @@ defmodule Jido.Chat.Telegram.Adapter do
 
   @impl true
   def handle_webhook(%Jido.Chat{} = chat, payload, opts \\ []) when is_map(payload) do
+    payload = normalize_metadata(payload)
+
     request =
       WebhookRequest.new(%{
         adapter_name: :telegram,
@@ -907,7 +909,7 @@ defmodule Jido.Chat.Telegram.Adapter do
          is_dm: chat_type == :private,
          metadata: %{}
        },
-       raw: message
+       raw: normalize_metadata(message)
      })}
   end
 

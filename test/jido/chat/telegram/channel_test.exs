@@ -254,6 +254,63 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
            ] = incoming.media
   end
 
+  test "transform_incoming/1 classifies animated and video sticker formats" do
+    cases = [
+      {%{"is_animated" => true, "is_video" => false}, :file},
+      {%{is_animated: false, is_video: true}, :video}
+    ]
+
+    for {format, expected_kind} <- cases do
+      update = %{
+        message: %{
+          message_id: 457,
+          chat: %{id: 789, type: "private"},
+          sticker:
+            Map.merge(
+              %{
+                file_id: "sticker-#{expected_kind}",
+                width: 512,
+                height: 512
+              },
+              format
+            )
+        }
+      }
+
+      assert {:ok, incoming} = Adapter.transform_incoming(update)
+      assert [%{kind: ^expected_kind}] = incoming.media
+    end
+  end
+
+  test "transform_incoming/1 accepts ExGram update and message structs" do
+    message = %ExGram.Model.Message{
+      message_id: 458,
+      date: 1_706_745_600,
+      chat: %ExGram.Model.Chat{id: 789, type: "private"},
+      from: %ExGram.Model.User{id: 111, is_bot: false, first_name: "Jane"},
+      sticker: %ExGram.Model.Sticker{
+        file_id: "struct-sticker",
+        file_unique_id: "struct-sticker-unique",
+        type: "regular",
+        width: 512,
+        height: 512,
+        is_animated: false,
+        is_video: false
+      }
+    }
+
+    update = %ExGram.Model.Update{update_id: 10, message: message}
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+    assert [%{kind: :image, url: "telegram://file/struct-sticker"}] = incoming.media
+    refute is_struct(incoming.raw)
+    refute is_struct(incoming.raw.sticker)
+
+    chat = Chat.new(user_name: "jido", adapters: %{telegram: Adapter})
+    assert {:ok, _chat, webhook_incoming} = Adapter.handle_webhook(chat, update)
+    assert [%{kind: :image}] = webhook_incoming.media
+  end
+
   test "transform_incoming/1 extracts an animation once when Telegram also sends its document" do
     animation = %{
       "file_id" => "animation-file",
