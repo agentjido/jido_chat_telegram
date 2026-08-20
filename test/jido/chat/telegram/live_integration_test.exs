@@ -296,6 +296,14 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       end)
     end)
 
+    assert {:ok, incoming} = Adapter.transform_incoming(%{message: photo.raw})
+
+    assert [%{kind: :image, media_type: "image/jpeg"} = photo_media] = incoming.media
+    assert String.starts_with?(photo_media.url, "telegram://file/")
+
+    assert {:ok, photo_bytes} = Adapter.fetch_media(photo_media, token: ctx.token)
+    assert <<0xFF, 0xD8, 0xFF, _rest::binary>> = photo_bytes
+
     assert {:ok, document} =
              Extensions.send_document(ctx.chat_id, document_ref,
                token: ctx.token,

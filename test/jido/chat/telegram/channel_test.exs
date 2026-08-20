@@ -205,7 +205,88 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     }
 
     assert {:ok, incoming} = Adapter.transform_incoming(update)
-    assert [%{kind: :image, url: "telegram://file/photo-large"}] = incoming.media
+
+    assert [%{kind: :image, url: "telegram://file/photo-large", media_type: "image/jpeg"}] =
+             incoming.media
+  end
+
+  test "transform_incoming/1 prefers an available photo MIME type to the fallback" do
+    update = %{
+      "message" => %{
+        "message_id" => 456,
+        "date" => 1_706_745_600,
+        "chat" => %{"id" => 789, "type" => "group"},
+        "photo" => [
+          %{
+            "file_id" => "photo-large",
+            "mime_type" => " image/png ",
+            "width" => 512,
+            "height" => 512
+          }
+        ]
+      }
+    }
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+
+    assert [%{kind: :image, url: "telegram://file/photo-large", media_type: "image/png"}] =
+             incoming.media
+  end
+
+  test "transform_incoming/1 uses the photo MIME fallback for blank or invalid values" do
+    for mime_type <- [nil, "", " \t\n", 123] do
+      update = %{
+        "message" => %{
+          "message_id" => 456,
+          "date" => 1_706_745_600,
+          "chat" => %{"id" => 789, "type" => "group"},
+          "photo" => [
+            %{
+              "file_id" => "photo-large",
+              "mime_type" => mime_type,
+              "width" => 512,
+              "height" => 512
+            }
+          ]
+        }
+      }
+
+      assert {:ok, incoming} = Adapter.transform_incoming(update)
+      assert [%{media_type: "image/jpeg"}] = incoming.media
+    end
+  end
+
+  test "transform_incoming/1 normalizes ExGram PhotoSize structs as JPEG" do
+    update = %{
+      message: %ExGram.Model.Message{
+        message_id: 456,
+        date: 1_706_745_600,
+        chat: %ExGram.Model.Chat{id: 789, type: "group"},
+        photo: [
+          %ExGram.Model.PhotoSize{
+            file_id: "photo-large",
+            file_unique_id: "photo-unique",
+            width: 512,
+            height: 512,
+            file_size: 4_096
+          }
+        ]
+      }
+    }
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+
+    assert [
+             %{
+               kind: :image,
+               url: "telegram://file/photo-large",
+               media_type: "image/jpeg",
+               size_bytes: 4_096,
+               width: 512,
+               height: 512,
+               metadata: %{telegram: %{file_unique_id: "photo-unique"}}
+             }
+           ] = incoming.media
   end
 
   test "transform_incoming/1 extracts a static sticker with Telegram metadata" do
