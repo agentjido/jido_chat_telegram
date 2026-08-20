@@ -205,7 +205,32 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     }
 
     assert {:ok, incoming} = Adapter.transform_incoming(update)
-    assert [%{kind: :image, url: "telegram://file/photo-large"}] = incoming.media
+
+    assert [%{kind: :image, url: "telegram://file/photo-large", media_type: "image/jpeg"}] =
+             incoming.media
+  end
+
+  test "transform_incoming/1 preserves a photo MIME type when Telegram provides one" do
+    update = %{
+      "message" => %{
+        "message_id" => 456,
+        "date" => 1_706_745_600,
+        "chat" => %{"id" => 789, "type" => "group"},
+        "photo" => [
+          %{
+            "file_id" => "photo-large",
+            "mime_type" => "image/png",
+            "width" => 512,
+            "height" => 512
+          }
+        ]
+      }
+    }
+
+    assert {:ok, incoming} = Adapter.transform_incoming(update)
+
+    assert [%{kind: :image, url: "telegram://file/photo-large", media_type: "image/png"}] =
+             incoming.media
   end
 
   test "transform_incoming/1 extracts a static sticker with Telegram metadata" do
