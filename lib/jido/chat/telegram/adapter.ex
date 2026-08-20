@@ -5,6 +5,9 @@ defmodule Jido.Chat.Telegram.Adapter do
 
   use Jido.Chat.Adapter
 
+  # TDLib defines message photo sizes as JPEG, but the Bot API omits their MIME type.
+  @photo_size_media_type "image/jpeg"
+
   alias Jido.Chat.{
     ChannelInfo,
     EphemeralMessage,
@@ -1087,7 +1090,7 @@ defmodule Jido.Chat.Telegram.Adapter do
   defp maybe_append_photo(media, photos) when is_list(photos) and photos != [] do
     photo = List.last(photos)
 
-    case normalize_telegram_media(:image, photo, "image/jpeg") do
+    case normalize_telegram_media(:image, photo, @photo_size_media_type) do
       nil -> media
       entry -> media ++ [entry]
     end
@@ -1120,7 +1123,7 @@ defmodule Jido.Chat.Telegram.Adapter do
   defp normalize_telegram_media(_kind, nil, _default_media_type), do: nil
 
   defp normalize_telegram_media(kind, media, default_media_type) when is_map(media) do
-    media_type = map_get(media, [:mime_type, "mime_type"]) || default_media_type
+    media_type = resolve_media_type(media, default_media_type)
     resolved_kind = resolve_kind(kind, media_type)
 
     media_ref =
@@ -1147,6 +1150,19 @@ defmodule Jido.Chat.Telegram.Adapter do
   end
 
   defp normalize_telegram_media(_kind, _media, _default_media_type), do: nil
+
+  defp resolve_media_type(media, default) do
+    case map_get(media, [:mime_type, "mime_type"]) do
+      value when is_binary(value) ->
+        case String.trim(value) do
+          "" -> default
+          value -> value
+        end
+
+      _other ->
+        default
+    end
+  end
 
   defp telegram_media_metadata(media) do
     telegram =
