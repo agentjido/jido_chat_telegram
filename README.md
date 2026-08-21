@@ -81,6 +81,11 @@ Notes:
 - This is Telegram UI streaming, not a change to Elixir stream semantics.
 - Draft streaming is only attempted for private chats with numeric chat IDs.
 - Group/channel targets fall back to a single final `sendMessage`.
+- Drafts use the core stateful Markdown renderer. It closes partial links, emphasis,
+  and code fences, and it holds incomplete table rows until they are safe to send.
+- Structured status, plan, step, and timeline chunks use deterministic Markdown fallbacks.
+- Empty, whitespace-only, and tool-only streams return `{:error, :empty_stream}` without
+  a Telegram API call.
 - The returned response always comes from the final sent message.
 - For manual verification in the Telegram client, use a long payload with
   noticeable pauses between chunks. Very short payloads can appear to land as a

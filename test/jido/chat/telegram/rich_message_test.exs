@@ -294,7 +294,7 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
 
     test "uses rich draft updates for a rich stream" do
       assert {:ok, _response} =
-               Adapter.stream(99, ["| A |", " B |"],
+               Adapter.stream(99, ["**hel", "lo**"],
                  token: "bot-token",
                  transport: CapturingTransport,
                  stream_update_interval_ms: 0,
@@ -304,14 +304,14 @@ defmodule Jido.Chat.Telegram.RichMessageTest do
 
       assert_received {:sent, "bot-token", "sendRichMessageDraft", first_payload, _opts}
       assert first_payload["draft_id"] == 7
-      assert first_payload["rich_message"] == %{"markdown" => "| A |"}
+      assert first_payload["rich_message"] == %{"markdown" => "**hel**"}
       refute Map.has_key?(first_payload, "text")
 
       assert_received {:sent, "bot-token", "sendRichMessageDraft", second_payload, _opts}
-      assert second_payload["rich_message"] == %{"markdown" => "| A | B |"}
+      assert second_payload["rich_message"] == %{"markdown" => "**hello**"}
 
       assert_received {:sent, "bot-token", "sendRichMessage", final_payload, _opts}
-      assert final_payload["rich_message"] == %{"markdown" => "| A | B |"}
+      assert final_payload["rich_message"] == %{"markdown" => "**hello**"}
     end
   end
 
