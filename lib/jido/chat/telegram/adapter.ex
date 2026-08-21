@@ -530,15 +530,6 @@ defmodule Jido.Chat.Telegram.Adapter do
   end
 
   @impl true
-  def fetch_messages(_chat_id, _opts), do: {:error, :unsupported}
-
-  @impl true
-  def fetch_channel_messages(_chat_id, _opts), do: {:error, :unsupported}
-
-  @impl true
-  def list_threads(_chat_id, _opts), do: {:error, :unsupported}
-
-  @impl true
   def verify_webhook(%WebhookRequest{} = request, opts \\ []) do
     verify_webhook_secret(opts, request.headers)
   end

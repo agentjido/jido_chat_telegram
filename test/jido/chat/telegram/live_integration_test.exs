@@ -563,9 +563,12 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
   end
 
   test "unsupported core surfaces remain explicit unsupported contracts", ctx do
-    assert {:error, :unsupported} = Adapter.fetch_messages(ctx.chat_id, ctx.opts)
-    assert {:error, :unsupported} = Adapter.fetch_channel_messages(ctx.chat_id, ctx.opts)
-    assert {:error, :unsupported} = Adapter.list_threads(ctx.chat_id, ctx.opts)
+    assert {:error, :unsupported} = Jido.Chat.Adapter.fetch_messages(Adapter, ctx.chat_id, ctx.opts)
+
+    assert {:error, :unsupported} =
+             Jido.Chat.Adapter.fetch_channel_messages(Adapter, ctx.chat_id, ctx.opts)
+
+    assert {:error, :unsupported} = Jido.Chat.Adapter.list_threads(Adapter, ctx.chat_id, ctx.opts)
 
     assert {:error, :unsupported} =
              Adapter.post_ephemeral(ctx.chat_id, "telegram-user", "secret", ctx.opts)

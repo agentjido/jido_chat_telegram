@@ -1097,9 +1097,9 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
   end
 
   test "history/list_threads remain unsupported in telegram phase 2" do
-    assert {:error, :unsupported} = Adapter.fetch_messages(123, [])
-    assert {:error, :unsupported} = Adapter.fetch_channel_messages(123, [])
-    assert {:error, :unsupported} = Adapter.list_threads(123, [])
+    assert {:error, :unsupported} = ChatAdapter.fetch_messages(Adapter, 123, [])
+    assert {:error, :unsupported} = ChatAdapter.fetch_channel_messages(Adapter, 123, [])
+    assert {:error, :unsupported} = ChatAdapter.list_threads(Adapter, 123, [])
   end
 
   test "open_thread/3 creates forum topics and normalizes room/thread ids" do
