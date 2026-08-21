@@ -1,9 +1,11 @@
 defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
-  use ExUnit.Case, async: true
+  use Jido.Chat.AdapterTestKit,
+    adapter: Jido.Chat.Telegram.Adapter,
+    async: true
 
   alias Jido.Chat
   alias Jido.Chat.Adapter, as: ChatAdapter
-  alias Jido.Chat.{Capabilities, FileUpload, PostPayload}
+  alias Jido.Chat.{Capabilities, FileUpload}
   alias Jido.Chat.Telegram.Adapter
 
   setup_all do
@@ -139,6 +141,7 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
 
     assert caps.send_message == :native
     assert caps.send_file == :native
+    assert caps.fetch_media == :native
     assert caps.edit_message == :native
     assert caps.fetch_messages == :unsupported
     assert caps.list_threads == :unsupported
@@ -863,20 +866,23 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert payload2["reaction"] == []
   end
 
-  test "send_file/3 sends images and maps generic reply/thread options" do
-    assert {:ok, response} =
-             Adapter.send_file(
-               123,
-               %FileUpload{
-                 kind: :image,
-                 url: "https://example.com/test.png",
-                 metadata: %{"caption" => "hello"}
-               },
-               token: "bot-token",
-               transport: MockTransport,
-               reply_to_id: 42,
-               external_thread_id: 99
-             )
+  capability_test :send_file, "sends images and maps generic reply/thread options" do
+    result =
+      Adapter.send_file(
+        123,
+        %FileUpload{
+          kind: :image,
+          url: "https://example.com/test.png",
+          metadata: %{"caption" => "hello"}
+        },
+        token: "bot-token",
+        transport: MockTransport,
+        reply_to_id: 42,
+        external_thread_id: 99
+      )
+
+    assert {:ok, response} = result
+    assert_capability_result(@adapter, :send_file, result)
 
     assert response.external_message_id == "77"
     assert response.external_room_id == 123
@@ -1042,7 +1048,7 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
 
   test "core post_message/4 uses telegram send_file support for canonical uploads" do
     payload =
-      PostPayload.new(%{
+      post_payload(
         text: "doc caption",
         files: [
           %{
@@ -1051,7 +1057,7 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
             filename: "test.pdf"
           }
         ]
-      })
+      )
 
     assert {:ok, response} =
              ChatAdapter.post_message(
@@ -1091,9 +1097,9 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
   end
 
   test "history/list_threads remain unsupported in telegram phase 2" do
-    assert {:error, :unsupported} = Adapter.fetch_messages(123, [])
-    assert {:error, :unsupported} = Adapter.fetch_channel_messages(123, [])
-    assert {:error, :unsupported} = Adapter.list_threads(123, [])
+    assert {:error, :unsupported} = ChatAdapter.fetch_messages(Adapter, 123, [])
+    assert {:error, :unsupported} = ChatAdapter.fetch_channel_messages(Adapter, 123, [])
+    assert {:error, :unsupported} = ChatAdapter.list_threads(Adapter, 123, [])
   end
 
   test "open_thread/3 creates forum topics and normalizes room/thread ids" do
