@@ -19,6 +19,8 @@ defmodule Jido.Chat.Telegram.Adapter do
     WebhookResponse
   }
 
+  alias Jido.Chat.Markdown.StreamRenderer
+
   alias Jido.Chat.Telegram.{
     DeleteOptions,
     EditOptions,
@@ -231,8 +233,8 @@ defmodule Jido.Chat.Telegram.Adapter do
     with {:ok, draft_chat_id} <- draft_chat_id(chat_id),
          {:ok, state} <-
            consume_stream_chunks(chunks, draft_chat_id, token, opts, draft_id, interval_ms) do
-      case state.text do
-        "" ->
+      case StreamRenderer.flush(state.renderer) do
+        nil ->
           {:error, :empty_stream}
 
         text ->
@@ -955,15 +957,27 @@ defmodule Jido.Chat.Telegram.Adapter do
   defp maybe_put_action(opts, status), do: Keyword.put(opts, :action, status)
 
   defp consume_stream_chunks(chunks, draft_chat_id, token, opts, draft_id, interval_ms) do
-    initial = %{text: "", last_draft_text: nil, last_update_ms: nil}
+    initial = %{renderer: StreamRenderer.new(), last_draft_text: nil, last_update_ms: nil}
 
     Enum.reduce_while(chunks, {:ok, initial}, fn chunk, {:ok, state} ->
-      next_state = %{state | text: state.text <> to_string(chunk)}
+      if draft_update_due?(state.last_update_ms, interval_ms) do
+        {renderer, snapshot} = StreamRenderer.push(state.renderer, chunk)
+        next_state = %{state | renderer: renderer}
 
-      case maybe_send_draft_update(next_state, draft_chat_id, token, opts, draft_id, interval_ms) do
-        {:ok, updated_state} -> {:cont, {:ok, updated_state}}
-        {:error, reason} -> {:halt, {:error, reason}}
-        :skip -> {:cont, {:ok, next_state}}
+        case maybe_send_draft_update(
+               next_state,
+               snapshot,
+               draft_chat_id,
+               token,
+               opts,
+               draft_id
+             ) do
+          {:ok, updated_state} -> {:cont, {:ok, updated_state}}
+          {:error, reason} -> {:halt, {:error, reason}}
+          :skip -> {:cont, {:ok, next_state}}
+        end
+      else
+        {:cont, {:ok, %{state | renderer: StreamRenderer.append(state.renderer, chunk)}}}
       end
     end)
   rescue
@@ -971,47 +985,54 @@ defmodule Jido.Chat.Telegram.Adapter do
   end
 
   defp maybe_send_draft_update(
-         %{text: ""},
+         _state,
+         nil,
          _draft_chat_id,
          _token,
          _opts,
-         _draft_id,
-         _interval_ms
+         _draft_id
        ),
        do: :skip
 
   defp maybe_send_draft_update(
-         %{text: text, last_draft_text: text},
+         %{last_draft_text: text},
+         text,
          _draft_chat_id,
          _token,
          _opts,
-         _draft_id,
-         _interval_ms
+         _draft_id
        ),
        do: :skip
 
-  defp maybe_send_draft_update(state, draft_chat_id, token, opts, draft_id, interval_ms) do
+  defp maybe_send_draft_update(
+         state,
+         text,
+         draft_chat_id,
+         token,
+         opts,
+         draft_id
+       ) do
     now_ms = System.monotonic_time(:millisecond)
 
-    if send_draft_now?(state.last_update_ms, now_ms, interval_ms) do
-      {method, draft_payload} = StreamOptions.draft_request(opts, draft_id, state.text)
-      payload = Map.put(draft_payload, "chat_id", draft_chat_id)
+    {method, draft_payload} = StreamOptions.draft_request(opts, draft_id, text)
+    payload = Map.put(draft_payload, "chat_id", draft_chat_id)
 
-      case transport(opts).call(
-             token,
-             method,
-             payload,
-             StreamOptions.transport_opts(opts)
-           ) do
-        {:ok, _result} ->
-          {:ok, %{state | last_draft_text: state.text, last_update_ms: now_ms}}
+    case transport(opts).call(
+           token,
+           method,
+           payload,
+           StreamOptions.transport_opts(opts)
+         ) do
+      {:ok, _result} ->
+        {:ok, %{state | last_draft_text: text, last_update_ms: now_ms}}
 
-        {:error, reason} ->
-          {:error, reason}
-      end
-    else
-      :skip
+      {:error, reason} ->
+        {:error, reason}
     end
+  end
+
+  defp draft_update_due?(last_update_ms, interval_ms) do
+    send_draft_now?(last_update_ms, System.monotonic_time(:millisecond), interval_ms)
   end
 
   defp send_draft_now?(nil, _now_ms, _interval_ms), do: true
@@ -1021,9 +1042,9 @@ defmodule Jido.Chat.Telegram.Adapter do
     do: now_ms - last_update_ms >= interval_ms
 
   defp fallback_stream_send(chat_id, chunks, opts) do
-    text = chunks |> Enum.map(&to_string/1) |> Enum.join("")
+    text = StreamRenderer.render(chunks)
 
-    if text == "" do
+    if is_nil(text) do
       {:error, :empty_stream}
     else
       send_message(chat_id, text, StreamOptions.send_opts(StreamOptions.new(opts)))
