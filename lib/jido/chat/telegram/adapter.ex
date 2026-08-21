@@ -51,6 +51,7 @@ defmodule Jido.Chat.Telegram.Adapter do
       fetch_metadata: :native,
       fetch_thread: :fallback,
       fetch_message: :unsupported,
+      fetch_media: :native,
       add_reaction: :native,
       remove_reaction: :native,
       post_ephemeral: :fallback,
