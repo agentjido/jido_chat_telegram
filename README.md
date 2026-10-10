@@ -240,3 +240,7 @@ scripts/telegram_watch_updates.sh --clear-webhook
 Additional helper:
 
 - `scripts/telegram_delete_webhook.sh`
+
+## Local Documentation
+
+Run `mix docs` to generate HTML and Markdown documentation in `doc/`, including Markdown pages and `llms.txt`.
