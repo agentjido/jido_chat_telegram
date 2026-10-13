@@ -20,6 +20,7 @@ defmodule Jido.Chat.Telegram.Normalizer do
   @message_kinds ~w(message channel_post edited_message edited_channel_post)
   @kinds @message_kinds ++ ~w(chat_member my_chat_member message_reaction callback_query)
   @limits [:signal_too_large, :delivery_too_large, :too_many_signals, :too_many_failures]
+  @private_media_fields ~w(file_unique_id type is_animated is_video emoji set_name custom_emoji_id needs_repainting)a
 
   @doc false
   @spec normalize(Binding.t(), term()) :: {:ok, Delivery.t()} | {:error, Jido.Chat.Errors.Contract.t()}
@@ -107,7 +108,7 @@ defmodule Jido.Chat.Telegram.Normalizer do
   defp map_item(context, kind, message, id) when kind in @message_kinds and is_map(message) do
     room = message |> field("chat") |> field("id") |> identifier()
     message_id = message |> field("message_id") |> identifier()
-    sender = sender(field(message, "from") || field(message, "sender_chat"), context.binding)
+    sender = sender(field(message, "from") || field(message, "sender_chat") || channel_sender(message), context.binding)
     text = field(message, "text") || field(message, "caption") || ""
     thread = message |> field("message_thread_id") |> identifier()
     service = field(message, "new_chat_members") || field(message, "left_chat_member")
@@ -279,17 +280,21 @@ defmodule Jido.Chat.Telegram.Normalizer do
       end
 
     entries = entries ++ [{sticker_kind, sticker, nil}]
+    entries = Enum.uniq_by(entries, fn {_kind, value, _default} -> field(value, "file_id") end)
 
     Enum.reduce_while(entries, {:ok, []}, fn
       {_kind, nil, _default}, result ->
         {:cont, result}
 
       {kind, value, default}, {:ok, acc} ->
+        mime = media_type(field(value, "mime_type"), default)
+        kind = media_kind(kind, mime)
+        private = private_media(kind, value, mime)
+
         with file when is_binary(file) <- identifier(field(value, "file_id")),
-             {:ok, ref} <- Resources.put(context.binding, "media", "telegram://file/" <> file, []) do
+             private <- Map.put(private, :url, "telegram://file/" <> file),
+             {:ok, ref} <- Resources.put(context.binding, "media", private, []) do
           Process.put(context.tracker, [ref | Process.get(context.tracker)])
-          mime = field(value, "mime_type") || default
-          kind = media_kind(kind, mime)
 
           item =
             %{"kind" => kind, "resource_ref" => ref}
@@ -308,6 +313,46 @@ defmodule Jido.Chat.Telegram.Normalizer do
   defp media_kind("file", "audio/" <> _), do: "audio"
   defp media_kind("file", "video/" <> _), do: "video"
   defp media_kind(kind, _), do: kind
+
+  defp media_type(value, default) when is_binary(value) do
+    case String.trim(value) do
+      "" -> default
+      value -> value
+    end
+  end
+
+  defp media_type(_value, default), do: default
+
+  defp private_media(kind, value, mime) do
+    telegram =
+      Map.new(
+        @private_media_fields,
+        &{&1, field(value, Atom.to_string(&1))}
+      )
+      |> select_present()
+
+    %{
+      kind: private_kind(kind),
+      media_type: mime,
+      filename: field(value, "file_name"),
+      size_bytes: field(value, "file_size"),
+      width: field(value, "width") || field(value, "length"),
+      height: field(value, "height") || field(value, "length"),
+      duration: field(value, "duration"),
+      metadata: %{telegram: telegram}
+    }
+    |> select_present()
+  end
+
+  defp channel_sender(message) do
+    chat = field(message, "chat")
+    if field(chat, "type") == "channel", do: chat
+  end
+
+  defp private_kind("image"), do: :image
+  defp private_kind("audio"), do: :audio
+  defp private_kind("video"), do: :video
+  defp private_kind("file"), do: :file
 
   defp mentions(message, binding) do
     entities = field(message, "entities") || field(message, "caption_entities") || []

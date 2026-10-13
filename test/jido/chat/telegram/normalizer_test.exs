@@ -126,7 +126,7 @@ defmodule Jido.Chat.Telegram.NormalizerTest do
     [fact] = normalized(binding, payload).signals
     assert Enum.map(fact.data["media"], & &1["kind"]) == ["image", "audio", "file"]
     assert hd(fact.data["media"])["media_type"] == "image/jpeg"
-    assert {:ok, "telegram://file/large"} = Resources.resolve(binding, hd(fact.data["media"])["resource_ref"])
+    assert {:ok, %{url: "telegram://file/large"}} = Resources.resolve(binding, hd(fact.data["media"])["resource_ref"])
     refute Jason.encode!(fact.data) =~ "telegram://file"
   end
 
@@ -240,5 +240,56 @@ defmodule Jido.Chat.Telegram.NormalizerTest do
     assert failure.type == "jido.chat.normalization.failed"
 
     assert [{{:resource, _}, _, "media", nil, _, :cancelled}] = :ets.tab2list(binding.resources)
+  end
+
+  test "private media retains provider dimensions and metadata while the Signal keeps a reference", %{binding: binding} do
+    attachment = %{
+      "file_id" => "animation",
+      "file_unique_id" => "unique",
+      "file_name" => "movie.mp4",
+      "mime_type" => " video/mp4 ",
+      "width" => 640,
+      "height" => 360,
+      "duration" => 4,
+      "file_size" => 4096
+    }
+
+    [fact] =
+      normalized(binding, update(10, %{"message" => message(%{"animation" => attachment, "document" => attachment})})).signals
+
+    assert [media] = fact.data["media"]
+    assert media["kind"] == "video"
+    assert media["media_type"] == "video/mp4"
+
+    assert {:ok,
+            %{
+              width: 640,
+              height: 360,
+              duration: 4,
+              size_bytes: 4096,
+              metadata: %{telegram: %{file_unique_id: "unique"}}
+            }} = Resources.resolve(binding, media["resource_ref"])
+
+    refute Map.has_key?(media, "width")
+    refute Map.has_key?(media, "metadata")
+  end
+
+  test "blank or non-string photo MIME values retain the JPEG provider fallback", %{binding: binding} do
+    for mime <- [nil, "", " \t\n", 123] do
+      [fact] =
+        normalized(
+          binding,
+          update(10, %{"message" => message(%{"photo" => [%{"file_id" => "photo", "mime_type" => mime}]})})
+        ).signals
+
+      assert hd(fact.data["media"])["media_type"] == "image/jpeg"
+    end
+  end
+
+  test "a channel post without a user sender uses the provider channel identity", %{binding: binding} do
+    channel = message(%{"chat" => %{"id" => -123, "type" => "channel", "title" => "Publisher"}}) |> Map.delete("from")
+    [fact] = normalized(binding, %{"update_id" => 10, "channel_post" => channel}).signals
+    assert fact.data["sender"]["id"] == "-123"
+    assert fact.data["conversation_kind"] == "channel"
   end
 end
