@@ -128,4 +128,38 @@ defmodule Jido.Chat.Telegram.OperationMatrixTest do
     assert {:ok, ^result} = Jido.Chat.execute(binding, parent)
     refute_received {:provider, _}
   end
+
+  test "a stream stays lazy before execution and is consumed once", %{binding: binding} do
+    stream =
+      Stream.map(["hello", " world"], fn chunk ->
+        send(self(), {:stream_chunk, chunk})
+        chunk
+      end)
+
+    {:ok, ref} = Jido.Chat.put_resource(binding, "stream", stream)
+    parent = Jido.Chat.Signal.Stream.new!(%{"request_id" => "lazy", "room_id" => "123", "resource_ref" => ref})
+    refute_received {:stream_chunk, _}
+    assert {:ok, result} = Jido.Chat.execute(binding, parent)
+    assert result.type == "jido.chat.operation.completed"
+    assert_receive {:stream_chunk, "hello"}
+    assert_receive {:stream_chunk, " world"}
+    assert {:ok, ^result} = Jido.Chat.execute(binding, parent)
+    refute_received {:stream_chunk, _}
+  end
+
+  test "a cancelled stream is never enumerated and invokes no provider", %{binding: binding} do
+    stream =
+      Stream.map(["private"], fn chunk ->
+        send(self(), :stream_enumerated)
+        chunk
+      end)
+
+    {:ok, ref} = Jido.Chat.put_resource(binding, "stream", stream)
+    :ok = Jido.Chat.cancel_resource(binding, ref)
+    parent = Jido.Chat.Signal.Stream.new!(%{"request_id" => "cancelled", "room_id" => "123", "resource_ref" => ref})
+    assert {:ok, failed} = Jido.Chat.execute(binding, parent)
+    assert failed.data["code"] == "resource_cancelled"
+    refute_received :stream_enumerated
+    refute_received {:provider, _}
+  end
 end

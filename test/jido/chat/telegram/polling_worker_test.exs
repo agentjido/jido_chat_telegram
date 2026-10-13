@@ -150,6 +150,31 @@ defmodule Jido.Chat.Telegram.PollingWorkerTest do
     assert :sys.get_state(pid).offset == 6
   end
 
+  test "membership sink rejection prevents checkpoint advancement" do
+    member = %{
+      "update_id" => 5,
+      "chat_member" => %{
+        "chat" => %{"id" => -123},
+        "old_chat_member" => %{"status" => "member", "user" => %{"id" => 42}},
+        "new_chat_member" => %{"status" => "restricted", "is_member" => false, "user" => %{"id" => 42}}
+      }
+    }
+
+    {pid, _binding} = start_worker([{:ok, [member]}, {:ok, [member]}], :error, offset: 3)
+    assert_receive {:get_updates_call, _, first}
+    assert first["offset"] == 3
+    assert_receive {:sink_emit, %Delivery{signals: [fact]}, []}
+    assert fact.type == "jido.chat.membership.changed"
+    assert fact.data["transition"] == "left"
+    assert :sys.get_state(pid).offset == 3
+    send(pid, :poll)
+    assert_receive {:get_updates_call, _, second}
+    assert second["offset"] == 3
+    assert_receive {:sink_emit, %Delivery{signals: [retry]}, []}
+    assert retry.data["item_id"] == fact.data["item_id"]
+    assert :sys.get_state(pid).offset == 3
+  end
+
   test "transport error and invalid batch do not call the sink" do
     {pid, _binding} = start_worker([{:error, :private_transport_failure}, {:ok, :invalid_batch}])
     assert_receive {:get_updates_call, _, _}
