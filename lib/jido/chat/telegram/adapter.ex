@@ -602,9 +602,20 @@ defmodule Jido.Chat.Telegram.Adapter do
       "id" => stringify(map_get(result, [:message_id, "message_id"]) || fallback_id),
       "room_id" => stringify(map_get(result, [:chat, "chat"]) |> map_get([:id, "id"]) || room),
       "text" => text,
-      "status" => status
+      "status" => status,
+      "timestamp" => provider_timestamp(map_get(result, [:date, "date"]))
     }
+    |> Map.reject(fn {_key, value} -> is_nil(value) end)
   end
+
+  defp provider_timestamp(value) when is_integer(value) do
+    case DateTime.from_unix(value) do
+      {:ok, time} -> DateTime.to_iso8601(time)
+      _ -> nil
+    end
+  end
+
+  defp provider_timestamp(_value), do: nil
 
   defp conversation_kind("private"), do: "direct"
   defp conversation_kind(kind) when kind in ["group", "supergroup"], do: "group"
