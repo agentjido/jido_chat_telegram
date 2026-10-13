@@ -22,8 +22,12 @@ defmodule Jido.Chat.Telegram.Membership do
   @doc false
   @spec normalize(Binding.t(), String.t(), String.t(), map()) ::
           {:ok, Jido.Signal.t()} | {:error, Jido.Chat.Errors.Contract.t()}
-  def normalize(%Binding{} = binding, delivery_id, kind, update)
-      when is_binary(delivery_id) and kind in ["chat_member", "my_chat_member"] and is_map(update) do
+  @spec normalize(Binding.t(), String.t(), String.t(), map(), keyword()) ::
+          {:ok, Jido.Signal.t()} | {:error, Jido.Chat.Errors.Contract.t()}
+  def normalize(binding, delivery_id, kind, update, opts \\ [])
+
+  def normalize(%Binding{} = binding, delivery_id, kind, update, opts)
+      when is_binary(delivery_id) and kind in ["chat_member", "my_chat_member"] and is_map(update) and is_list(opts) do
     with room when is_binary(room) <- update |> field("chat") |> field("id") |> id(),
          member when is_map(member) <- field(update, "new_chat_member"),
          participant when is_binary(participant) <- member |> field("user") |> field("id") |> id(),
@@ -34,7 +38,7 @@ defmodule Jido.Chat.Telegram.Membership do
 
       data = %{
         "delivery_id" => delivery_id,
-        "item_id" => delivery_id <> ":" <> kind <> ":" <> participant,
+        "item_id" => Keyword.get(opts, :item_id, delivery_id <> ":" <> kind <> ":" <> participant),
         "room_id" => room,
         "participant_id" => participant,
         "actor_id" => update |> field("from") |> field("id") |> id(),
@@ -56,7 +60,7 @@ defmodule Jido.Chat.Telegram.Membership do
     _, _ -> Policy.error(:invalid_delivery)
   end
 
-  def normalize(_binding, _delivery_id, _kind, _update), do: Policy.error(:invalid_delivery)
+  def normalize(_binding, _delivery_id, _kind, _update, _opts), do: Policy.error(:invalid_delivery)
 
   defp previous_identity(update, participant) do
     case update |> field("old_chat_member") |> field("user") |> field("id") |> id() do
