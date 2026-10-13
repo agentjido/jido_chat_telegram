@@ -184,4 +184,26 @@ defmodule Jido.Chat.Telegram.PollingWorkerTest do
     assert :sys.get_state(pid).offset == nil
     refute_received {:sink_emit, _, _}
   end
+
+  for limit <- [:count, :failures, :aggregate] do
+    test "complete #{limit} rejection keeps the checkpoint and makes zero sink calls" do
+      batch =
+        case unquote(limit) do
+          :count -> Enum.map(1..101, &update/1)
+          :failures -> Enum.map(1..21, &%{"update_id" => &1, "message" => %{}})
+          :aggregate -> Enum.map(1..6, &update(&1, String.duplicate("x", 200_000)))
+        end
+
+      {pid, _binding} = start_worker([{:ok, batch}, {:ok, batch}], :ok, offset: 3)
+      assert_receive {:get_updates_call, _, first}
+      assert first["offset"] == 3
+      assert :sys.get_state(pid).offset == 3
+      refute_received {:sink_emit, _, _}
+      send(pid, :poll)
+      assert_receive {:get_updates_call, _, second}
+      assert second["offset"] == 3
+      assert :sys.get_state(pid).offset == 3
+      refute_received {:sink_emit, _, _}
+    end
+  end
 end
