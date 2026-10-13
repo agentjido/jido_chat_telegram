@@ -6,6 +6,58 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
   alias Jido.Chat.Telegram.Extensions
   alias Jido.Chat.FileUpload
 
+  defmodule CaptureTransport do
+    @behaviour Jido.Chat.Telegram.Transport
+    @impl true
+    def call(token, method, payload, opts) do
+      result = Jido.Chat.Telegram.Transport.ExGramClient.call(token, method, payload, opts)
+
+      case result do
+        {:ok, value} when is_map(value) ->
+          id = Map.get(value, "message_id") || Map.get(value, :message_id)
+          if id, do: Process.put({__MODULE__, to_string(id)}, value)
+
+        _ ->
+          :ok
+      end
+
+      result
+    end
+  end
+
+  defp provider_raw(%{raw: raw}), do: raw
+  defp provider_raw(message), do: Process.get({CaptureTransport, message_id(message)}, %{})
+
+  defp native_media(message, ctx) do
+    {:ok, binding} = Chat.bind(Adapter, Keyword.put(ctx.opts, :id, "live-media"))
+    payload = if is_struct(message), do: Map.from_struct(message), else: message
+    payload = Map.put_new(payload, :from, %{id: 9_999_002, first_name: "Fixture"})
+    {:ok, %{signals: [fact]}} = Chat.normalize_event(binding, %{message: payload})
+
+    Enum.map(fact.data["media"], fn item ->
+      {:ok, private} = Chat.resolve_resource(binding, item["resource_ref"])
+      private
+    end)
+  end
+
+  defp native_post(room, payload, opts) do
+    {:ok, binding} = Chat.bind(Adapter, Keyword.put(opts, :id, "live-post"))
+    [file] = payload.files
+    {:ok, ref} = Chat.put_resource(binding, "file", Jido.Chat.FileUpload.normalize(file))
+
+    data = %{
+      "request_id" => Jido.Chat.ID.generate!(),
+      "room_id" => to_string(room),
+      "content" => %{"kind" => "media", "resource_ref" => ref, "caption" => payload.text}
+    }
+
+    data = if opts[:thread_id], do: Map.put(data, "thread_id", to_string(opts[:thread_id])), else: data
+
+    with {:ok, request} <- Jido.Chat.Signal.PostMessage.new(data),
+         {:ok, result} <- Chat.execute(binding, request),
+         do: {:ok, result.data["result"]}
+  end
+
   @run_live System.get_env("RUN_LIVE_TELEGRAM_TESTS") in ["1", "true", "TRUE", "yes", "on"]
   @token System.get_env("TELEGRAM_BOT_TOKEN")
   @chat_id System.get_env("TELEGRAM_TEST_CHAT_ID")
@@ -48,13 +100,13 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
     text = "jido live integration #{System.system_time(:millisecond)}"
 
     assert {:ok, sent} = Adapter.send_message(ctx.chat_id, text, ctx.opts)
-    message_id = sent.message_id || sent.external_message_id
+    message_id = message_id(sent)
     assert message_id
 
     assert {:ok, edited} =
              Adapter.edit_message(ctx.chat_id, message_id, text <> " (edited)", ctx.opts)
 
-    assert (edited.message_id || edited.external_message_id) == message_id
+    assert message_id(edited) == message_id
     assert :ok = Adapter.delete_message(ctx.chat_id, message_id, ctx.opts)
   end
 
@@ -62,7 +114,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
     assert :ok = Adapter.start_typing(ctx.chat_id, ctx.opts)
 
     assert {:ok, info} = Adapter.fetch_metadata(ctx.chat_id, ctx.opts)
-    assert info.id == to_string(ctx.chat_id)
+    assert info["id"] == to_string(ctx.chat_id)
   end
 
   test "stream sends draft updates and a final message against live Telegram Bot API", ctx do
@@ -96,7 +148,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
                )
              )
 
-    message_id = sent.message_id || sent.external_message_id
+    message_id = message_id(sent)
     assert message_id
 
     Process.sleep(2_000)
@@ -144,10 +196,10 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       end)
     end)
 
-    assert map_get(reply.raw, [:rich_message, "rich_message"])
+    assert map_get(provider_raw(reply), [:rich_message, "rich_message"])
 
     assert to_string(
-             reply.raw
+             provider_raw(reply)
              |> map_get([:reply_to_message, "reply_to_message"])
              |> map_get([:message_id, "message_id"])
            ) == root_id
@@ -161,7 +213,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
              )
 
     assert message_id(edited) == reply_id
-    assert map_get(edited.raw, [:rich_message, "rich_message"])
+    assert map_get(provider_raw(edited), [:rich_message, "rich_message"])
 
     assert {:ok, streamed} =
              Adapter.stream(
@@ -182,7 +234,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       end)
     end)
 
-    assert map_get(streamed.raw, [:rich_message, "rich_message"])
+    assert map_get(provider_raw(streamed), [:rich_message, "rich_message"])
   end
 
   test "reply continuity preserves reply_to metadata and optional topic routing", ctx do
@@ -213,19 +265,19 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       end)
     end)
 
-    reply_to_message = map_get(reply.raw, [:reply_to_message, "reply_to_message"])
+    reply_to_message = map_get(provider_raw(reply), [:reply_to_message, "reply_to_message"])
 
     if is_map(reply_to_message) do
       assert to_string(map_get(reply_to_message, [:message_id, "message_id"])) == root_id
     else
       assert reply_id != root_id
 
-      assert to_string(map_get(reply.raw, [:chat, "chat"]) |> map_get([:id, "id"])) ==
+      assert to_string(map_get(provider_raw(reply), [:chat, "chat"]) |> map_get([:id, "id"])) ==
                to_string(ctx.chat_id)
     end
 
     if @thread_id do
-      assert to_string(map_get(reply.raw, [:message_thread_id, "message_thread_id"])) ==
+      assert to_string(map_get(provider_raw(reply), [:message_thread_id, "message_thread_id"])) ==
                to_string(@thread_id)
     end
   end
@@ -257,9 +309,11 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
   end
 
   test "webhook handling pipeline processes Telegram-shaped payload", ctx do
-    chat =
-      Chat.new(user_name: "jido", adapters: %{telegram: Adapter})
-      |> Chat.on_slash_command(fn _event -> send(self(), :slash_seen) end)
+    {:ok, binding} = Chat.bind(Adapter, Keyword.put(ctx.opts, :id, "live-webhook"))
+    {:ok, handlers} = Jido.Chat.Handlers.new()
+
+    {:ok, handlers} =
+      Jido.Chat.Handlers.on(handlers, Jido.Chat.Signal.SlashCommandReceived, fn _ -> send(self(), :slash_seen) end)
 
     payload = %{
       "message" => %{
@@ -270,7 +324,8 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       }
     }
 
-    assert {:ok, _chat, _incoming} = Adapter.handle_webhook(chat, payload, ctx.opts)
+    assert {:ok, delivery} = Chat.normalize_event(binding, payload)
+    assert {:ok, _handlers, _} = Jido.Chat.Handlers.accept(handlers, binding, delivery)
     assert_received :slash_seen
   end
 
@@ -296,9 +351,9 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       end)
     end)
 
-    assert {:ok, incoming} = Adapter.transform_incoming(%{message: photo.raw})
+    incoming_media = native_media(photo.raw, ctx)
 
-    assert [%{kind: :image, media_type: "image/jpeg"} = photo_media] = incoming.media
+    assert [%{kind: :image, media_type: "image/jpeg"} = photo_media] = incoming_media
     assert String.starts_with?(photo_media.url, "telegram://file/")
 
     assert {:ok, photo_bytes} = Adapter.fetch_media(photo_media, token: ctx.token)
@@ -413,7 +468,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       })
 
     assert {:ok, photo} = Adapter.send_file(ctx.chat_id, photo_upload, ctx.opts)
-    photo_id = photo.external_message_id || photo.message_id
+    photo_id = message_id(photo)
 
     on_exit(fn ->
       cleanup_delete(fn ->
@@ -434,9 +489,9 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       })
 
     assert {:ok, document} =
-             Jido.Chat.Adapter.post_message(Adapter, ctx.chat_id, payload, ctx.opts)
+             native_post(ctx.chat_id, payload, ctx.opts)
 
-    document_id = document.external_message_id || document.message_id
+    document_id = message_id(document)
 
     on_exit(fn ->
       cleanup_delete(fn ->
@@ -535,7 +590,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
   end
 
   test "webhook handling supports channel_post and edited_channel_post shapes", ctx do
-    chat = Chat.new(user_name: "jido", adapters: %{telegram: Adapter})
+    {:ok, binding} = Chat.bind(Adapter, Keyword.put(ctx.opts, :id, "live-channel"))
 
     channel_post = %{
       "channel_post" => %{
@@ -555,26 +610,34 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       }
     }
 
-    assert {:ok, _chat, incoming_1} = Adapter.handle_webhook(chat, channel_post, ctx.opts)
-    assert incoming_1.external_message_id == 9_999_011
+    assert {:ok, %{signals: [incoming_1]}} = Chat.normalize_event(binding, channel_post)
+    assert incoming_1.data["message_id"] == "9999011"
 
-    assert {:ok, _chat, incoming_2} = Adapter.handle_webhook(chat, edited_channel_post, ctx.opts)
-    assert incoming_2.external_message_id == 9_999_013
+    assert {:ok, %{signals: [incoming_2]}} = Chat.normalize_event(binding, edited_channel_post)
+    assert incoming_2.data["message_id"] == "9999013"
   end
 
   test "unsupported core surfaces remain explicit unsupported contracts", ctx do
-    assert {:error, :unsupported} = Jido.Chat.Adapter.fetch_messages(Adapter, ctx.chat_id, ctx.opts)
+    {:ok, binding} = Chat.bind(Adapter, Keyword.put(ctx.opts, :id, "live-unsupported"))
 
-    assert {:error, :unsupported} =
-             Jido.Chat.Adapter.fetch_channel_messages(Adapter, ctx.chat_id, ctx.opts)
+    for definition <- [
+          Jido.Chat.Signal.FetchMessages,
+          Jido.Chat.Signal.FetchChannelMessages,
+          Jido.Chat.Signal.ListThreads
+        ] do
+      request = definition.new!(%{"request_id" => Atom.to_string(definition), "room_id" => to_string(ctx.chat_id)})
+      assert {:ok, failure} = Chat.execute(binding, request)
+      assert failure.data["code"] == "unsupported"
+    end
 
-    assert {:error, :unsupported} = Jido.Chat.Adapter.list_threads(Adapter, ctx.chat_id, ctx.opts)
+    assert {:error, :unsupported} = Adapter.post_ephemeral(ctx.chat_id, "telegram-user", "secret", ctx.opts)
+    {:ok, ref} = Chat.put_resource(binding, "modal", Jido.Chat.Modal.new(%{title: "modal"}))
 
-    assert {:error, :unsupported} =
-             Adapter.post_ephemeral(ctx.chat_id, "telegram-user", "secret", ctx.opts)
+    request =
+      Jido.Chat.Signal.OpenModal.new!(%{"request_id" => "modal", "room_id" => to_string(ctx.chat_id), "modal" => ref})
 
-    assert {:error, :unsupported} =
-             Jido.Chat.Adapter.open_modal(Adapter, ctx.chat_id, %{title: "modal"}, ctx.opts)
+    assert {:ok, failure} = Chat.execute(binding, request)
+    assert failure.data["code"] == "unsupported"
   end
 
   if @callback_query_id not in [nil, ""] do
@@ -603,7 +666,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
   end
 
   defp adapter_opts(token) do
-    opts = [token: token]
+    opts = [token: token, transport: Jido.Chat.Telegram.LiveIntegrationTest.CaptureTransport]
 
     case @thread_id do
       nil -> opts
@@ -630,8 +693,8 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
 
   defp assert_live_media(message, field, expected_kind, ctx) do
     assert map_get(message, [field, Atom.to_string(field)])
-    assert {:ok, incoming} = Adapter.transform_incoming(%{message: message})
-    assert [media] = incoming.media
+    incoming_media = native_media(message, ctx)
+    assert [media] = incoming_media
     assert media.kind == expected_kind
     assert String.starts_with?(media.url, "telegram://file/")
 
@@ -650,6 +713,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
     |> Base.decode64!()
   end
 
+  defp message_id(%{"id" => value}) when not is_nil(value), do: to_string(value)
   defp message_id(%{message_id: value}) when not is_nil(value), do: to_string(value)
   defp message_id(%{external_message_id: value}) when not is_nil(value), do: to_string(value)
 
