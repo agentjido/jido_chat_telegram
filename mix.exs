@@ -58,6 +58,7 @@ defmodule Jido.Chat.Telegram.MixProject do
   defp deps do
     [
       chat_dependency(),
+      signal_test_dependency(),
       {:ex_gram, "~> 0.69"},
       {:req, "~> 0.7.1"},
       {:jason, "~> 1.4"},
@@ -70,6 +71,15 @@ defmodule Jido.Chat.Telegram.MixProject do
       {:git_hooks, "~> 0.8", only: [:dev, :test], runtime: false},
       {:git_ops, "~> 2.9", only: :dev, runtime: false}
     ]
+  end
+
+  # The published beta lacks the Signal API used by this migration.
+  defp signal_test_dependency do
+    {:jido_signal,
+     git: "https://github.com/agentjido/jido_signal.git",
+     ref: "d6611eca1c95eb507843baceb55991e4801d8421",
+     only: [:dev, :test],
+     override: true}
   end
 
   defp chat_dependency do
