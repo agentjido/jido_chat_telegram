@@ -77,6 +77,12 @@ defmodule Jido.Chat.Telegram.MixProject do
       {env, path} when env in [:dev, :test] and is_binary(path) and path != "" ->
         {:jido_chat, path: Path.expand(path), override: true}
 
+      {env, _} when env in [:dev, :test] ->
+        {:jido_chat,
+         git: "https://github.com/agentjido/jido_chat.git",
+         ref: "2a9c21a860cb8c5f1069a865a981a8be035f56c0",
+         override: true}
+
       _ ->
         {:jido_chat, "~> 2.0"}
     end
