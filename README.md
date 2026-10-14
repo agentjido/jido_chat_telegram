@@ -8,239 +8,64 @@
 [![Ecosystem](https://img.shields.io/badge/ecosystem-jido.run-0ea5e9.svg)](https://jido.run/ecosystem)
 [![Discord](https://img.shields.io/badge/discord-join-5865F2.svg?logo=discord&logoColor=white)](https://jido.run/discord)
 
-`jido_chat_telegram` is the Telegram adapter package for `jido_chat`.
+`jido_chat_telegram` provides the `Jido.Chat.Telegram.Adapter` adapter for the public Chat Signal contract.
 
-## Release Status
+## Release status
 
-This package is being prepared for the Jido 1.x chat package release line.
-It is part of the Elixir implementation aligned to the Vercel Chat SDK
-([chat-sdk.dev/docs](https://www.chat-sdk.dev/docs)).
+This branch proposes version 2.0. It changes the public communication API.
+Use the immutable PR source commits for review and tests. The new Hex releases
+are not yet published. Production requires Chat 2.0 and compatible upstream
+Signal releases. The dependency helpers keep source pins in development and test.
 
-`Jido.Chat.Telegram.Adapter` is the canonical adapter module and uses `ExGram` as the Telegram client.
-No Telegex dependency is required.
+## Typed operations
 
-## Installation
-
-```elixir
-def deps do
-  [
-    {:jido_chat_telegram, "~> 1.0"}
-  ]
-end
-```
-
-## Usage
+The application supplies private binding options and a provider room ID:
 
 ```elixir
-alias Jido.Chat.Telegram.Adapter
-
-{:ok, incoming} =
-  Adapter.transform_incoming(%{
-    "message" => %{
-      "message_id" => 42,
-      "date" => 1_706_745_600,
-      "chat" => %{"id" => 123, "type" => "private"},
-      "from" => %{"id" => 99, "first_name" => "Alice"},
-      "text" => "hello"
-    }
-  })
-
-{:ok, sent} =
-  Adapter.send_message(123, "hi", token: System.fetch_env!("TELEGRAM_BOT_TOKEN"))
+{:ok, binding} = Jido.Chat.bind(Jido.Chat.Telegram.Adapter, private_binding_options)
+request = Jido.Chat.Signal.SendMessage.new!(%{
+  "request_id" => "request-1",
+  "room_id" => provider_room_id,
+  "text" => "Hello"
+})
+{:ok, result} = Jido.Chat.execute(binding, request)
 ```
 
-`ExGram` is used under the hood, with a Req-backed adapter by default.
+The result is an OperationCompleted or OperationFailed signal. Repeating an
+admitted request uses its saved result. Private tokens, clients and resources
+stay outside signal data. Unsupported operations return a defined typed result.
 
-## Streaming Responses
+## Inbound delivery
 
-Telegram live-response streaming is supported for private chats with numeric chat IDs.
-The adapter uses Telegram Bot API drafts to progressively render text in the client,
-then sends one final canonical message when generation completes.
+Normalize one complete verified provider input unit with the configured binding:
 
 ```elixir
-chunks =
-  Stream.concat([
-    ["Hello"],
-    Stream.map([" from Telegram"], fn chunk ->
-      Process.sleep(300)
-      chunk
-    end)
-  ])
-
-{:ok, sent} =
-  Jido.Chat.Adapter.stream(
-    Jido.Chat.Telegram.Adapter,
-    123_456_789,
-    chunks,
-    token: System.fetch_env!("TELEGRAM_BOT_TOKEN")
-  )
+{:ok, delivery} = Jido.Chat.normalize_event(binding, verified_provider_input)
+{:ok, observations} = MyApp.Messaging.accept_delivery(delivery)
 ```
 
-Notes:
+The Messaging instance owns runtime acceptance. Deliveries retain ordered facts
+and explicit item failures. Membership evidence does not create grants or start
+message handlers. A rejected listener sink follows the provider checkpoint rule.
+Configure protocol version 1 before starting provider listeners.
 
-- This is Telegram UI streaming, not a change to Elixir stream semantics.
-- Draft streaming is only attempted for private chats with numeric chat IDs.
-- Group/channel targets fall back to a single final `sendMessage`.
-- Drafts use the core stateful Markdown renderer. It closes partial links, emphasis,
-  and code fences, and it holds incomplete table rows until they are safe to send.
-- Structured status, plan, step, and timeline chunks use deterministic Markdown fallbacks.
-- Empty, whitespace-only, and tool-only streams return `{:error, :empty_stream}` without
-  a Telegram API call.
-- The returned response always comes from the final sent message.
-- For manual verification in the Telegram client, use a long payload with
-  noticeable pauses between chunks. Very short payloads can appear to land as a
-  single final message even when draft updates are being accepted by the API.
+## Operation support
 
-## Telegram Extension Surface
+Native: `send_message`, `send_file`, `edit_message`, `delete_message`, `start_typing`, `fetch_metadata`, `fetch_media`, `add_reaction`, `remove_reaction`, `stream`, `open_thread`, `open_dm`.
 
-For Telegram-specific features that are intentionally outside core `Jido.Chat.Adapter`,
-use `Jido.Chat.Telegram.Extensions`:
+Fallback: `post_message`, `fetch_thread`, `post_ephemeral`, `post_channel_message`.
 
-```elixir
-alias Jido.Chat.Telegram.Extensions
+All other operations are explicitly unsupported. See the frozen [adapter matrix](https://github.com/agentjido/jido_chat/blob/codex/public-signal-v3/docs/migration/adapter-matrix.json).
 
-# Telegram-only media send helpers
-{:ok, photo} =
-  Extensions.send_photo(123, "AgACAg...", token: System.fetch_env!("TELEGRAM_BOT_TOKEN"))
+## Provider setup
 
-{:ok, document} =
-  Extensions.send_document(123, "BQACAg...", token: System.fetch_env!("TELEGRAM_BOT_TOKEN"))
+Telegram uses ExGram. Webhooks and polling use the same native mapper. Private chat drafts support streaming. Group and channel targets use the declared fallback. Telegram extension helpers remain available for provider-specific media work.
 
-# Resolve or download an inbound Telegram attachment
-{:ok, file_info} =
-  Extensions.get_file("telegram://file/BQACAg...",
-    token: System.fetch_env!("TELEGRAM_BOT_TOKEN")
-  )
+## Checks and migration
 
-{:ok, bytes} =
-  Extensions.download_file("telegram://file/BQACAg...",
-    token: System.fetch_env!("TELEGRAM_BOT_TOKEN")
-  )
+Run `mix test` and `mix quality`. Live tests stay excluded by default. The fixed
+provider fixtures do not need credentials or live traffic.
 
-# Telegram-only callback query answer helper
-:ok =
-  Extensions.answer_callback_query("1234567890", token: System.fetch_env!("TELEGRAM_BOT_TOKEN"))
-  |> case do
-    {:ok, _result} -> :ok
-    other -> other
-  end
-```
-
-Typed extension structs are provided for:
-
-- `Jido.Chat.Telegram.UpdateEnvelope`
-- `Jido.Chat.Telegram.CallbackQuery`
-- `Jido.Chat.Telegram.InlineKeyboard` / `InlineKeyboardButton`
-- `Jido.Chat.Telegram.MediaMessage`
-- `Jido.Chat.Telegram.FileInfo`
-
-## Config
-
-You can pass `:token` per call, or configure globally:
-
-```elixir
-config :jido_chat_telegram, :telegram_bot_token, System.get_env("TELEGRAM_BOT_TOKEN")
-```
-
-To target a local Telegram Bot API server at runtime, pass `:url` with the
-adapter options:
-
-```elixir
-Adapter.send_message(123, "hi",
-  token: System.fetch_env!("TELEGRAM_BOT_TOKEN"),
-  url: "http://localhost:8081"
-)
-```
-
-The same `:url` option is honored by webhook subscription helpers:
-
-```elixir
-Adapter.ensure_ingress_subscription("bridge_tg",
-  token: System.fetch_env!("TELEGRAM_BOT_TOKEN"),
-  target_url: "https://example.com/webhooks/telegram",
-  url: "http://localhost:8081"
-)
-```
-
-For tests, this package will automatically load `.env` and `.env.test` via `dotenvy`
-from `test/test_helper.exs`.
-
-## Ingress Modes (`listener_child_specs/2`)
-
-The Telegram adapter ingress callback supports:
-
-- `ingress.mode = "webhook"`: no listener workers (`{:ok, []}`), host HTTP handles webhook ingress.
-- `ingress.mode = "polling"`: starts `PollingWorker` and emits updates via `sink_mfa`.
-
-Example:
-
-```elixir
-{:ok, specs} =
-  Jido.Chat.Telegram.Adapter.listener_child_specs("bridge_tg",
-    ingress: %{mode: "polling", token: System.fetch_env!("TELEGRAM_BOT_TOKEN")},
-    sink_mfa: {Jido.Messaging.IngressSink, :emit, [MyApp.Messaging, "bridge_tg"]}
-  )
-```
-
-## Live Integration Test
-
-There is a live test module at:
-
-- `test/jido/chat/telegram/live_integration_test.exs`
-
-It is skipped by default. To run it:
-
-1. Start a private chat with your bot and send at least one message (`/start` is fine).
-2. Copy and fill local env file:
-
-```bash
-cp .env.example .env
-```
-
-3. Run:
-
-```bash
-mix test test/jido/chat/telegram/live_integration_test.exs --include live
-```
-
-To run only the file-download integration test:
-
-```bash
-mix test test/jido/chat/telegram/live_integration_test.exs:234 --include live
-```
-
-Current live coverage in that file includes:
-
-- send, edit, and delete
-- typing and metadata
-- streaming draft updates and final message send
-- reply continuity and optional topic routing
-- local file uploads from disk paths and in-memory byte payloads
-- forum topic creation via `open_thread/3` when `TELEGRAM_TEST_FORUM_CHAT_ID` is set
-- reactions, with explicit unsupported acceptance when the Bot API feature is unavailable
-- media sends through `Jido.Chat.Telegram.Extensions`
-- attachment metadata resolution and raw-byte downloads, including JSON content
-- inbound sticker, animation, and video-note normalization with media downloads
-- canonical media sends through `send_file/3` and core `post_message/4`
-- webhook-shaped ingress
-- unsupported-core contract checks
-
-If you need `TELEGRAM_TEST_CHAT_ID`, use the helper script:
-
-```bash
-scripts/telegram_get_chat_id.sh --clear-webhook
-```
-
-For live update logs while chatting with your bot from Telegram:
-
-```bash
-scripts/telegram_watch_updates.sh --clear-webhook
-```
-
-Additional helper:
-
-- `scripts/telegram_delete_webhook.sh`
-
-## Local Documentation
-
-Run `mix docs` to generate HTML and Markdown documentation in `doc/`, including Markdown pages and `llms.txt`.
+See the [migration guide](https://github.com/agentjido/jido_chat/blob/codex/public-signal-v3/docs/migration/MIGRATION_GUIDE.md)
+for API mappings, the complete runnable local example, limits, release order and
+rollback pins. Run `mix docs` to build this package's API documentation.

@@ -57,7 +57,8 @@ defmodule Jido.Chat.Telegram.MixProject do
 
   defp deps do
     [
-      {:jido_chat, "~> 1.2 and >= 1.2.1"},
+      chat_dependency(),
+      signal_test_dependency(),
       {:ex_gram, "~> 0.69"},
       {:req, "~> 0.7.1"},
       {:jason, "~> 1.4"},
@@ -70,6 +71,31 @@ defmodule Jido.Chat.Telegram.MixProject do
       {:git_hooks, "~> 0.8", only: [:dev, :test], runtime: false},
       {:git_ops, "~> 2.9", only: :dev, runtime: false}
     ]
+  end
+
+  # The published beta lacks the Signal API used by this migration.
+  defp signal_test_dependency do
+    {:jido_signal,
+     git: "https://github.com/agentjido/jido_signal.git",
+     ref: "d6611eca1c95eb507843baceb55991e4801d8421",
+     only: [:dev, :test],
+     override: true}
+  end
+
+  defp chat_dependency do
+    case {Mix.env(), System.get_env("JIDO_CHAT_PATH")} do
+      {env, path} when env in [:dev, :test] and is_binary(path) and path != "" ->
+        {:jido_chat, path: Path.expand(path), override: true}
+
+      {env, _} when env in [:dev, :test] ->
+        {:jido_chat,
+         git: "https://github.com/agentjido/jido_chat.git",
+         ref: "2a9c21a860cb8c5f1069a865a981a8be035f56c0",
+         override: true}
+
+      _ ->
+        {:jido_chat, "~> 2.0"}
+    end
   end
 
   defp aliases do

@@ -1,6 +1,6 @@
 defmodule Jido.Chat.Telegram.Extensions do
   @moduledoc """
-  Telegram-specific extension API for features outside core `Jido.Chat.Adapter`.
+  Private Telegram transport controls outside the shared operation contract.
 
   This module is intentionally platform-specific and keeps Telegram-only semantics
   out of `jido_chat` core abstractions.
@@ -9,13 +9,11 @@ defmodule Jido.Chat.Telegram.Extensions do
   alias Jido.Chat.Telegram.{
     CallbackAnswerOptions,
     CallbackAnswerResult,
-    CallbackQuery,
     DocumentOptions,
     FileInfo,
     FileOptions,
     MediaMessage,
-    PhotoOptions,
-    UpdateEnvelope
+    PhotoOptions
   }
 
   alias Jido.Chat.Telegram.Transport.ExGramClient
@@ -34,93 +32,10 @@ defmodule Jido.Chat.Telegram.Extensions do
       get_file: :native,
       download_file: :native,
       answer_callback_query: :native,
-      parse_update_envelope: :native,
       inline_keyboard: :native,
       send_media_group: :unsupported,
       forum_topics: :unsupported
     }
-  end
-
-  @doc """
-  Parses a Telegram update into a typed extension envelope.
-  """
-  @spec parse_update(map()) :: {:ok, UpdateEnvelope.t()} | {:error, term()}
-  def parse_update(update) when is_map(update) do
-    update_id = map_get(update, [:update_id, "update_id"])
-
-    cond do
-      is_map(map_get(update, [:callback_query, "callback_query"])) ->
-        callback_query = map_get(update, [:callback_query, "callback_query"])
-
-        {:ok,
-         UpdateEnvelope.new(%{
-           update_id: update_id,
-           update_type: :callback_query,
-           payload: normalize_callback_query(callback_query),
-           raw: update,
-           metadata: %{}
-         })}
-
-      is_map(map_get(update, [:message_reaction, "message_reaction"])) ->
-        {:ok,
-         UpdateEnvelope.new(%{
-           update_id: update_id,
-           update_type: :message_reaction,
-           payload: map_get(update, [:message_reaction, "message_reaction"]),
-           raw: update,
-           metadata: %{}
-         })}
-
-      is_map(map_get(update, [:edited_channel_post, "edited_channel_post"])) ->
-        {:ok,
-         UpdateEnvelope.new(%{
-           update_id: update_id,
-           update_type: :edited_channel_post,
-           payload: map_get(update, [:edited_channel_post, "edited_channel_post"]),
-           raw: update,
-           metadata: %{}
-         })}
-
-      is_map(map_get(update, [:channel_post, "channel_post"])) ->
-        {:ok,
-         UpdateEnvelope.new(%{
-           update_id: update_id,
-           update_type: :channel_post,
-           payload: map_get(update, [:channel_post, "channel_post"]),
-           raw: update,
-           metadata: %{}
-         })}
-
-      is_map(map_get(update, [:edited_message, "edited_message"])) ->
-        {:ok,
-         UpdateEnvelope.new(%{
-           update_id: update_id,
-           update_type: :edited_message,
-           payload: map_get(update, [:edited_message, "edited_message"]),
-           raw: update,
-           metadata: %{}
-         })}
-
-      is_map(map_get(update, [:message, "message"])) ->
-        {:ok,
-         UpdateEnvelope.new(%{
-           update_id: update_id,
-           update_type: :message,
-           payload: map_get(update, [:message, "message"]),
-           raw: update,
-           metadata: %{}
-         })}
-
-      true ->
-        {:ok,
-         UpdateEnvelope.new(%{
-           update_id: update_id,
-           update_type: :noop,
-           payload: nil,
-           raw: update,
-           metadata: %{reason: :unsupported_update_type}
-         })}
-    end
   end
 
   @doc """
@@ -256,21 +171,6 @@ defmodule Jido.Chat.Telegram.Extensions do
          raw: result
        })}
     end
-  end
-
-  defp normalize_callback_query(callback_query) when is_map(callback_query) do
-    message = map_get(callback_query, [:message, "message"]) || %{}
-    chat = map_get(message, [:chat, "chat"]) || %{}
-
-    CallbackQuery.new(%{
-      id: to_string(map_get(callback_query, [:id, "id"]) || Jido.Chat.ID.generate!()),
-      data: map_get(callback_query, [:data, "data"]),
-      from: map_get(callback_query, [:from, "from"]),
-      chat_id: map_get(chat, [:id, "id"]),
-      message_id: map_get(message, [:message_id, "message_id"]),
-      inline_message_id: map_get(callback_query, [:inline_message_id, "inline_message_id"]),
-      raw: callback_query
-    })
   end
 
   defp normalize_media_result(kind, result, chat_id) when is_map(result) do

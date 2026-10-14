@@ -2,12 +2,10 @@ defmodule Jido.Chat.Telegram.ExtensionsTest do
   use ExUnit.Case, async: true
 
   alias Jido.Chat.Telegram.{
-    CallbackQuery,
     Extensions,
     FileInfo,
     InlineKeyboard,
-    MediaMessage,
-    UpdateEnvelope
+    MediaMessage
   }
 
   defmodule MockTransport do
@@ -122,32 +120,37 @@ defmodule Jido.Chat.Telegram.ExtensionsTest do
     assert Keyword.get(request_opts, :decode_body) == false
   end
 
-  test "Adapter.fetch_media/2 downloads bytes for a Telegram reference" do
-    assert {:ok, incoming} =
-             Jido.Chat.Telegram.Adapter.transform_incoming(%{
-               "message" => %{
-                 "message_id" => 1,
-                 "chat" => %{"id" => 2, "type" => "private"},
-                 "sticker" => %{
-                   "file_id" => "static-sticker",
-                   "width" => 512,
-                   "height" => 512,
-                   "is_animated" => false,
-                   "is_video" => false
-                 }
-               }
-             })
+  test "Adapter.fetch_media/2 downloads bytes for a scoped Telegram resource" do
+    {:ok, binding} =
+      Jido.Chat.bind(Jido.Chat.Telegram.Adapter,
+        id: "extensions",
+        token: "bot-token",
+        transport: MockTransport,
+        adapter_opts: [url: "http://localhost:8081"],
+        http_client: MockHttpClient
+      )
 
-    assert [sticker] = incoming.media
+    payload = %{
+      "message" => %{
+        "message_id" => 1,
+        "chat" => %{"id" => 2, "type" => "private"},
+        "from" => %{"id" => 3},
+        "sticker" => %{
+          "file_id" => "static-sticker",
+          "width" => 512,
+          "height" => 512,
+          "is_animated" => false,
+          "is_video" => false
+        }
+      }
+    }
 
-    assert {:ok, "file contents"} =
-             Jido.Chat.Telegram.Adapter.fetch_media(sticker,
-               token: "bot-token",
-               transport: MockTransport,
-               adapter_opts: [url: "http://localhost:8081"],
-               http_client: MockHttpClient
-             )
-
+    assert {:ok, %{signals: [fact]}} = Jido.Chat.normalize_event(binding, payload)
+    assert [sticker] = fact.data["media"]
+    request = Jido.Chat.Signal.FetchMedia.new!(%{"request_id" => "fetch", "media_ref" => sticker["resource_ref"]})
+    assert {:ok, result} = Jido.Chat.execute(binding, request)
+    assert result.type == "jido.chat.operation.completed"
+    assert {:ok, "file contents"} = Jido.Chat.resolve_resource(binding, result.data["result"]["resource_ref"])
     assert_received {:download, "http://localhost:8081/file/botbot-token/documents/static-sticker.txt", _request_opts}
   end
 
@@ -186,7 +189,7 @@ defmodule Jido.Chat.Telegram.ExtensionsTest do
     assert {:error, :invalid_download_response} = Extensions.download_file("invalid-response", opts)
   end
 
-  test "parse_update/1 normalizes callback_query into typed envelope" do
+  test "normalize_event selects a native callback query fact" do
     update = %{
       "update_id" => 10,
       "callback_query" => %{
@@ -200,16 +203,20 @@ defmodule Jido.Chat.Telegram.ExtensionsTest do
       }
     }
 
-    assert {:ok, %UpdateEnvelope{} = envelope} = Extensions.parse_update(update)
-    assert envelope.update_type == :callback_query
-
-    assert %CallbackQuery{id: "cb-1", data: "approve", chat_id: 123, message_id: 100} =
-             envelope.payload
+    {:ok, binding} = Jido.Chat.bind(Jido.Chat.Telegram.Adapter, id: "callback", token: "fixture-token")
+    assert {:ok, %{signals: [fact]}} = Jido.Chat.normalize_event(binding, update)
+    assert fact.type == "jido.chat.action.received"
+    assert fact.data["interaction_id"] == "cb-1"
+    assert fact.data["value"] == "approve"
+    assert fact.data["room_id"] == "123"
+    assert fact.data["message_id"] == "100"
   end
 
-  test "parse_update/1 returns noop envelope for unsupported updates" do
-    assert {:ok, %UpdateEnvelope{update_type: :noop}} =
-             Extensions.parse_update(%{"update_id" => 11, "poll" => %{}})
+  test "normalize_event returns a typed unsupported fact for unknown updates" do
+    {:ok, binding} = Jido.Chat.bind(Jido.Chat.Telegram.Adapter, id: "unsupported", token: "fixture-token")
+    assert {:ok, %{signals: [fact]}} = Jido.Chat.normalize_event(binding, %{"update_id" => 11, "poll" => %{}})
+    assert fact.type == "jido.chat.normalization.failed"
+    assert fact.data["code"] == "unsupported_item"
   end
 
   test "send_photo/send_document return typed media messages" do

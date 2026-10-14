@@ -2,18 +2,19 @@ defmodule Jido.Chat.Telegram.PollingWorker do
   @moduledoc """
   Bridge-ingress polling worker for Telegram `getUpdates`.
 
-  This worker is adapter-owned and runtime-agnostic. It emits raw update payloads
-  via `sink_mfa` so host runtimes can route through their own ingress pipelines.
+  This worker is adapter-owned and runtime-agnostic. It validates the complete
+  fetched batch through the captured binding before it calls the typed sink.
   """
 
   use GenServer
 
-  alias Jido.Chat.Telegram.Transport.ExGramClient
+  alias Jido.Chat.Binding
 
   @type sink_mfa :: {module(), atom(), [term()]}
 
   @type state :: %{
           bridge_id: String.t(),
+          binding: Binding.t(),
           sink_mfa: sink_mfa(),
           sink_opts: keyword(),
           token: String.t(),
@@ -37,18 +38,19 @@ defmodule Jido.Chat.Telegram.PollingWorker do
     bridge_id = Keyword.fetch!(opts, :bridge_id)
     sink_mfa = Keyword.fetch!(opts, :sink_mfa)
 
-    token =
-      opts[:token] || Application.get_env(:jido_chat_telegram, :telegram_bot_token) ||
-        raise(ArgumentError, "missing Telegram bot token for polling worker")
+    binding = Keyword.fetch!(opts, :binding)
+    %Binding{} = binding
+    token = Keyword.fetch!(binding.options, :token)
 
     poll_interval_ms = normalize_pos_integer(opts[:poll_interval_ms], 250)
 
     state = %{
       bridge_id: bridge_id,
+      binding: binding,
       sink_mfa: sink_mfa,
       sink_opts: Keyword.get(opts, :sink_opts, []),
       token: token,
-      transport: Keyword.get(opts, :transport, ExGramClient),
+      transport: Keyword.fetch!(binding.options, :transport),
       transport_opts: Keyword.get(opts, :transport_opts, []),
       timeout_s: normalize_pos_integer(opts[:timeout_s], 20),
       poll_interval_ms: poll_interval_ms,
@@ -98,39 +100,33 @@ defmodule Jido.Chat.Telegram.PollingWorker do
     end
   end
 
+  defp emit_updates([], state), do: {:ok, state}
+
   defp emit_updates(updates, state) do
-    Enum.reduce_while(updates, {:ok, state.offset}, fn update, {:ok, current_offset} ->
-      case emit_update(state, update) do
-        :ok ->
-          {:cont, {:ok, next_offset(update, current_offset)}}
-
-        {:error, reason} ->
-          {:halt, {:error, reason}}
-      end
-    end)
-    |> case do
-      {:ok, next_offset} ->
-        {:ok, %{state | offset: next_offset}}
-
-      {:error, reason} ->
-        {:error, reason, state}
+    with {:ok, delivery} <- Jido.Chat.normalize_event(state.binding, updates),
+         :ok <- emit_delivery(state, delivery) do
+      offset = Enum.reduce(updates, state.offset, &next_offset/2)
+      {:ok, %{state | offset: offset}}
+    else
+      {:error, reason} -> {:error, reason, state}
     end
+  rescue
+    _ -> {:error, :invalid_sink_result, state}
+  catch
+    _, _ -> {:error, :invalid_sink_result, state}
   end
 
-  defp emit_update(state, update) when is_map(update) do
-    case invoke_sink(state.sink_mfa, update, state.sink_opts) do
+  defp emit_delivery(state, delivery) do
+    case invoke_sink(state.sink_mfa, delivery, state.sink_opts) do
       {:ok, _result} -> :ok
       :ok -> :ok
-      {:error, _reason} = error -> error
-      other -> {:error, {:invalid_sink_result, other}}
+      _ -> {:error, :sink_rejected}
     end
   end
-
-  defp emit_update(_state, _update), do: {:error, :invalid_update_payload}
 
   defp invoke_sink({module, function, base_args}, payload, opts)
        when is_atom(module) and is_atom(function) and is_list(base_args) and is_list(opts) do
-    apply(module, function, base_args ++ [payload, Keyword.put(opts, :mode, :payload)])
+    apply(module, function, base_args ++ [payload, opts])
   end
 
   defp invoke_sink(_sink_mfa, _payload, _opts), do: {:error, :invalid_sink_mfa}
