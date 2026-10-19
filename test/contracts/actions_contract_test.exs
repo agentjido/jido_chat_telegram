@@ -2,8 +2,8 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
   use Covenant.Case, component: "jido_chat_telegram.actions", async: true
   @moduletag capture_log: true
   alias Jido.Chat
-  alias Chat.Telegram
-  alias Telegram.ContractFixtures, as: F
+  alias Jido.Chat.Telegram
+  alias Jido.Chat.Telegram.ContractFixtures, as: F
 
   @tag obligation: "jido_chat_telegram.actions.I1"
   test "all fourteen Actions execute exact provider calls for two clients through Exec and Chat" do
@@ -129,7 +129,7 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
       assert failed.data["client_id"] == client.id
       assert failed.data["request_id"] == request.data["request_id"]
       assert failed.extensions["traceparent"] == F.trace()
-      assert failed.extensions["causationid"] == request.id
+      assert failed.extensions["jidocausationid"] == request.id
 
       if is_integer(retry_after) and retry_after >= 0,
         do: assert(failed.data["retry_after_ms"] == retry_after * 1000),
@@ -181,7 +181,7 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
     assert_receive {:telegram_contract_wire, _, "getMe", %{}, _, task}
     assert failed.type == Telegram.GetMe.Failed.type()
     assert failed.data["outcome"] == "unknown"
-    assert failed.extensions["causationid"] == request.id
+    assert failed.extensions["jidocausationid"] == request.id
     assert F.round_trip(failed) == failed
     refute Process.alive?(task)
     refute_receive {:telegram_contract_wire, _, _, _, _, _}
@@ -247,8 +247,8 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
     assert first_method == "sendMessage"
     assert_receive {:telegram_contract_wire, _, second_method, _, _, _}
     assert second_method == "sendPoll"
-    assert message_result.extensions["causationid"] == message.id
-    assert poll_result.extensions["causationid"] == poll.id
+    assert message_result.extensions["jidocausationid"] == message.id
+    assert poll_result.extensions["jidocausationid"] == poll.id
     assert F.round_trip(poll_result) == poll_result
 
     router =
@@ -304,7 +304,7 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
         assert envelope["properties"]["data"] == entry["data_schema"]
 
         assert Map.keys(envelope["properties"]) --
-                 ~w(id source type specversion subject time datacontenttype dataschema data traceparent tracestate causationid) ==
+                 ~w(id source type specversion subject time datacontenttype dataschema data traceparent tracestate jidocausationid) ==
                  []
       end
 

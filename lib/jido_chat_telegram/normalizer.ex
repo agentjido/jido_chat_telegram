@@ -13,8 +13,8 @@ defmodule Jido.Chat.Telegram.Normalizer do
     ReactionAdded,
     ReactionRemoved,
     SlashCommandReceived,
-    ThreadStarted,
-    ThreadChanged
+    ThreadChanged,
+    ThreadStarted
   }
 
   alias Jido.Chat.Telegram.Membership
@@ -498,7 +498,7 @@ defmodule Jido.Chat.Telegram.Normalizer do
   defp build(context, definition, item, data, subject \\ nil) do
     data = data |> Map.put("delivery_id", context.delivery) |> Map.put("item_id", item)
     subject = subject || if data["room_id"], do: Identity.conversation_subject(context.client.id, data["room_id"])
-    definition.new(data, source: context.client.source, subject: subject)
+    Policy.new(definition, data, source: context.client.source, subject: subject)
   end
 
   defp failed(context, id, kind, index, room, code) do

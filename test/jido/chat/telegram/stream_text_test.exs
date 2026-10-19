@@ -233,7 +233,7 @@ defmodule Jido.Chat.Telegram.StreamTextTest do
                max_attempts: 1
              )
 
-    assert completed.extensions["causationid"] == request.id
+    assert completed.extensions["jidocausationid"] == request.id
     assert {:ok, json} = Jido.Signal.Serialization.serialize(completed)
     assert {:ok, ^completed} = Jido.Signal.Catalog.decode(Jido.Chat.Telegram.catalog(), json)
     refute json =~ "private-token"
@@ -271,7 +271,11 @@ defmodule Jido.Chat.Telegram.StreamTextTest do
     caller = self()
 
     source =
-      Stream.resource(fn -> 0 end, fn n -> {[Integer.to_string(n)], n + 1} end, fn _ -> send(caller, :source_closed) end)
+      Stream.resource(
+        fn -> 0 end,
+        fn n -> {[Integer.to_string(n)], n + 1} end,
+        fn _ -> send(caller, :source_closed) end
+      )
 
     response = fn _, _ -> {:error, :timeout} end
     assert {:error, %Jido.Chat.Error{}} = stream(source, options: [observer: self(), response: response])

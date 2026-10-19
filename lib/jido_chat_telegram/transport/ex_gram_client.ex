@@ -6,8 +6,8 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
   @behaviour Jido.Chat.Telegram.Transport
 
   alias ExGram.Model.{
-    InputRichMessage,
     InputPollOption,
+    InputRichMessage,
     ReactionTypeCustomEmoji,
     ReactionTypeEmoji,
     ReactionTypePaid,

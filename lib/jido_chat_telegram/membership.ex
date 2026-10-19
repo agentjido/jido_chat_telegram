@@ -40,7 +40,10 @@ defmodule Jido.Chat.Telegram.Membership do
         "current" => current
       }
 
-      MembershipChanged.new(data, source: client.source, subject: Identity.conversation_subject(client.id, room))
+      Policy.new(MembershipChanged, data,
+        source: client.source,
+        subject: Identity.conversation_subject(client.id, room)
+      )
     else
       {:error, _} = error -> error
       _ -> Policy.error(:invalid_delivery)

@@ -2,8 +2,8 @@ defmodule Jido.Chat.Telegram.AdapterContractTest do
   use Covenant.Case, component: "jido_chat_telegram.adapter", async: true
   @moduletag capture_log: true
   alias Jido.Chat
-  alias Chat.Telegram
-  alias Telegram.ContractFixtures, as: F
+  alias Jido.Chat.Telegram
+  alias Jido.Chat.Telegram.ContractFixtures, as: F
 
   @tag obligation: "jido_chat_telegram.adapter.I1"
   test "public exports, exact capabilities, configured discovery, and startup metadata stay fixed" do
@@ -230,6 +230,7 @@ defmodule Jido.Chat.Telegram.AdapterContractTest do
 
       for {signal, fixture} <- Enum.zip(delivery.signals, expected) do
         assert signal.type == fixture["type"]
+        assert %Jido.Signal.Trace{} = Jido.Signal.Trace.get(signal)
         assert signal.source == client.source
         assert signal.data["delivery_id"] == delivery.id
         assert signal.data["item_id"] == "telegram:update:#{fixture["update_id"]}:#{fixture["item_suffix"]}"

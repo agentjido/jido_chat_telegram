@@ -580,7 +580,7 @@ defmodule Jido.Chat.Telegram.PublicAPILiveTest do
     assert signal.type == definition.type() <> ".completed"
     assert signal.data["operation"] == definition.type()
     assert signal.data["client_id"] == ctx.client.id
-    assert is_binary(signal.extensions["causationid"])
+    assert is_binary(signal.extensions["jidocausationid"])
 
     if request_id,
       do: assert(signal.data["request_id"] == request_id),
@@ -593,7 +593,7 @@ defmodule Jido.Chat.Telegram.PublicAPILiveTest do
   defp assert_round_trip(signal) do
     assert {:ok, json} = Jido.Signal.Serialization.serialize(signal)
     assert {:ok, ^signal} = Jido.Signal.Catalog.decode(Jido.Chat.Telegram.catalog(), json)
-    refute json =~ @token
+    refute json =~ to_string(@token)
   end
 
   defp download(ctx, ref) do

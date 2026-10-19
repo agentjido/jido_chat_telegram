@@ -52,7 +52,7 @@ defmodule Jido.Chat.Telegram.StreamRendererTest do
       Jido.Chat.Client.new!(Adapter, id: "telegram", credentials: %{token: "bot-token"}, transport: CapturingTransport)
 
     with {:ok, request} <-
-           Jido.Chat.Signal.SendMessage.new(%{
+           Jido.Chat.Signal.Policy.new(Jido.Chat.Signal.SendMessage, %{
              "client_id" => client.id,
              "request_id" => "stream",
              "room_id" => "123",

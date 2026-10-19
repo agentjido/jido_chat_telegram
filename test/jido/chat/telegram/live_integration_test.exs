@@ -492,7 +492,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
 
     assert completed.data["client_id"] == ctx.client.id
     assert completed.data["request_id"] == request.data["request_id"]
-    assert completed.extensions["causationid"] == request.id
+    assert completed.extensions["jidocausationid"] == request.id
     assert_round_trip(completed, action)
     completed.data["result"]
   end
@@ -501,7 +501,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
     catalog = Jido.Signal.Catalog.new!(Enum.uniq(Jido.Chat.signal_definitions() ++ action.signal_definitions()))
     assert {:ok, json} = Jido.Signal.Serialization.serialize(signal)
     assert {:ok, ^signal} = Jido.Signal.Catalog.decode(catalog, json)
-    refute json =~ @token
+    refute json =~ to_string(@token)
   end
 
   defp send_message(ctx, text) do

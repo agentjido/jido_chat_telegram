@@ -1,8 +1,8 @@
 defmodule Jido.Chat.Telegram.Transport.ExGramBoundaryTest do
   use ExUnit.Case, async: true
-  alias Jido.Chat.Telegram.Transport.ExGramClient
+  alias ExGram.Model.{InputRichMessage, ReactionTypeCustomEmoji, ReactionTypeEmoji, ReactionTypePaid, ReplyParameters}
   alias Jido.Chat.Telegram.TestHTTP
-  alias ExGram.Model.{InputRichMessage, ReplyParameters, ReactionTypeEmoji, ReactionTypeCustomEmoji, ReactionTypePaid}
+  alias Jido.Chat.Telegram.Transport.ExGramClient
 
   defmodule CurrentAPI do
     def get_me(opts), do: {:ok, opts}

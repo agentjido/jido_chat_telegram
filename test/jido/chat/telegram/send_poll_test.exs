@@ -28,7 +28,7 @@ defmodule Jido.Chat.Telegram.SendPollTest do
     do: Client.new!(Adapter, id: "telegram", credentials: %{token: "private-token"}, transport: Transport)
 
   defp request do
-    Jido.Chat.Telegram.Signal.SendPoll.new!(%{
+    Jido.Chat.Signal.Policy.new!(Jido.Chat.Telegram.Signal.SendPoll, %{
       "client_id" => "telegram",
       "request_id" => "poll-request-1",
       "room_id" => "123",

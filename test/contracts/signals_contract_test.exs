@@ -1,8 +1,8 @@
 defmodule Jido.Chat.Telegram.SignalsContractTest do
   use Covenant.Case, component: "jido_chat_telegram.signals", async: true
   alias Jido.Chat
-  alias Chat.Telegram
-  alias Telegram.ContractFixtures, as: F
+  alias Jido.Chat.Telegram
+  alias Jido.Chat.Telegram.ContractFixtures, as: F
 
   @tag obligation: "jido_chat_telegram.signals.I1"
   test "all forty-two definition identities and JSON data schemas match the fixed manifest" do
@@ -74,7 +74,7 @@ defmodule Jido.Chat.Telegram.SignalsContractTest do
       assert {:ok, signal} = definition.new(entry["fixture"], entry["fixture_options"])
       assert signal.extensions["traceparent"] == F.trace()
       assert signal.extensions["tracestate"] == "contract=telegram"
-      assert signal.extensions["causationid"] == "fixture-parent"
+      assert signal.extensions["jidocausationid"] == "fixture-parent"
 
       for catalog <- catalogs do
         assert F.round_trip(signal, catalog) == signal

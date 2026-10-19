@@ -136,14 +136,10 @@ defmodule Jido.Chat.Telegram.Streaming do
   end
 
   defp action(state, action, data) do
-    extensions =
-      state.request.extensions
-      |> Map.take(["traceparent", "tracestate"])
-      |> Map.put("causationid", state.request.id)
-
     data = Map.merge(data, %{"client_id" => state.client.id, "request_id" => Jido.Signal.ID.generate!()})
 
-    with {:ok, signal} <- action.signal_definition().new(data, source: state.client.source, extensions: extensions),
+    with {:ok, signal} <-
+           Jido.Chat.Signal.Policy.reply(action.signal_definition(), data, state.request, source: state.client.source),
          {:ok, %{signal: completed}} <-
            Jido.Exec.run(action, %{signal: signal}, %{client: state.client, options: state.opts}, max_attempts: 1) do
       {:ok, completed.data["result"]}

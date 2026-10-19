@@ -224,7 +224,7 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert :ok = Jido.Chat.AdapterTestKit.Assertions.assert_json_round_trip(sent, catalog)
 
     assert {:error, _} =
-             Jido.Chat.Signal.CreateThread.new(%{
+             Jido.Chat.Signal.Policy.new(Jido.Chat.Signal.CreateThread, %{
                "client_id" => "telegram",
                "request_id" => "r",
                "room_id" => "123",

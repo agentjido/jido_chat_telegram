@@ -19,7 +19,7 @@ client = Jido.Chat.Client.new!(Jido.Chat.Telegram.Adapter,
 
 {:ok, delivery} = Jido.Chat.normalize(client, provider_input)
 
-poll = Jido.Chat.Telegram.Signal.SendPoll.new!(%{
+poll = Jido.Chat.Signal.Policy.new!(Jido.Chat.Telegram.Signal.SendPoll, %{
   "client_id" => client.id,
   "request_id" => "poll:1",
   "room_id" => room_id,
@@ -52,7 +52,7 @@ Jido.Chat.Telegram.event_definitions()  # 10 admitted incoming facts
 Jido.Chat.Telegram.signal_definitions() # 42 extension definitions
 catalog = Jido.Chat.Telegram.catalog()  # 86 core + 42 Telegram definitions
 
-photo = Jido.Chat.Telegram.Signal.SendPhoto.new!(%{
+photo = Jido.Chat.Signal.Policy.new!(Jido.Chat.Telegram.Signal.SendPhoto, %{
   "client_id" => client.id,
   "request_id" => "photo:1",
   "room_id" => room_id,

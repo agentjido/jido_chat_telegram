@@ -2,7 +2,7 @@ defmodule Jido.Chat.Telegram.ContractFixtures do
   @moduledoc false
   import ExUnit.Assertions
   alias Jido.Chat
-  alias Chat.Telegram
+  alias Jido.Chat.Telegram
 
   @root Path.expand("../fixtures", __DIR__)
   @cases @root |> Path.join("provider_cases.json") |> File.read!() |> Jason.decode!()
@@ -62,7 +62,7 @@ defmodule Jido.Chat.Telegram.ContractFixtures do
     assert result.data["operation"] == request.type
     assert result.extensions["traceparent"] == @trace
     assert result.extensions["tracestate"] == "contract=telegram"
-    assert result.extensions["causationid"] == request.id
+    assert result.extensions["jidocausationid"] == request.id
     assert {:ok, _} = action.validate_output(%{signal: result})
     assert {:error, _} = action.validate_output(%{signal: request})
     assert round_trip(result) == result
