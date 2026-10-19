@@ -42,14 +42,14 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
     use Jido.Flow, name: "telegram_live_draft_flow"
 
     flow do
-      step("first", action: Telegram.SendDraft, params: %{signal: input(:first)})
-      step("second", action: Telegram.SendDraft, params: %{signal: input(:second)}, needs: ["first"])
-      step("finish", action: Jido.Chat.SendMessage, params: %{signal: input(:finish)}, needs: ["second"])
+      step("first", action: Telegram.SendDraft, params: input(:first))
+      step("second", action: Telegram.SendDraft, params: input(:second), needs: ["first"])
+      step("finish", action: Jido.Chat.SendMessage, params: input(:finish), needs: ["second"])
 
       output(%{
-        first: result("first", [:signal]),
-        second: result("second", [:signal]),
-        signal: result("finish", [:signal])
+        first: result("first"),
+        second: result("second"),
+        signal: result("finish")
       })
     end
   end
@@ -390,7 +390,9 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
         })
 
       assert {:error, %Jido.Chat.Error{signal: failed}} =
-               Jido.Exec.run(Jido.Chat.CreateThread, %{signal: request}, %{client: ctx.client}, max_attempts: 1)
+               Jido.Chat.Telegram.ActionHelpers.execute(Jido.Chat.CreateThread, request, %{client: ctx.client},
+                 max_attempts: 1
+               )
 
       assert failed.type == Jido.Chat.CreateThread.Failed.type()
       assert failed.data["code"] == "provider_failure"
@@ -488,7 +490,9 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
     request = command(ctx, action, data)
 
     assert {:ok, %{signal: completed}} =
-             Jido.Exec.run(action, %{signal: request}, %{client: ctx.client, options: opts}, max_attempts: 1)
+             Jido.Chat.Telegram.ActionHelpers.execute(action, request, %{client: ctx.client, options: opts},
+               max_attempts: 1
+             )
 
     assert completed.data["client_id"] == ctx.client.id
     assert completed.data["request_id"] == request.data["request_id"]

@@ -105,7 +105,7 @@ defmodule Jido.Chat.Telegram.SignalsContractTest do
             %{request | extensions: Map.put(request.extensions, "privatetoken", "never-project-this")},
             %{request | data: Map.put(request.data, "raw", %{"credentials" => "never-project-this"})}
           ] do
-        assert {:error, _} = Jido.Exec.run(action, %{signal: bad}, %{client: client}, max_attempts: 1)
+        assert {:error, _} = Jido.Chat.Telegram.ActionHelpers.execute(action, bad, %{client: client}, max_attempts: 1)
 
         assert {:error, _} =
                  Jido.Exec.run(action, %{"signal" => Jido.Signal.to_map(bad)}, %{client: client}, max_attempts: 1)
@@ -250,12 +250,15 @@ defmodule Jido.Chat.Telegram.SignalsContractTest do
     assert byte_size(json) == 262_144
 
     assert {:ok, %{signal: completed}} =
-             Jido.Exec.run(Telegram.SendDraft, %{signal: maximum}, %{client: client}, max_attempts: 1)
+             Jido.Chat.Telegram.ActionHelpers.execute(Telegram.SendDraft, maximum, %{client: client}, max_attempts: 1)
 
     assert completed.data["result"]["acknowledged"]
     assert_receive {:telegram_contract_wire, _, "sendMessageDraft", _, _, _}
     larger = %{maximum | data: Map.update!(maximum.data, "text", &(&1 <> "x"))}
-    assert {:error, _} = Jido.Exec.run(Telegram.SendDraft, %{signal: larger}, %{client: client}, max_attempts: 1)
+
+    assert {:error, _} =
+             Jido.Chat.Telegram.ActionHelpers.execute(Telegram.SendDraft, larger, %{client: client}, max_attempts: 1)
+
     refute_receive {:telegram_contract_wire, _, _, _, _, _}
   end
 

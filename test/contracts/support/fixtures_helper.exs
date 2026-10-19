@@ -51,7 +51,9 @@ defmodule Jido.Chat.Telegram.ContractFixtures do
   end
 
   def run(action, client, fields \\ %{}, opts \\ []) do
-    Jido.Exec.run(action, %{signal: request(action, client, fields)}, %{client: client, options: opts}, max_attempts: 1)
+    Jido.Chat.Telegram.ActionHelpers.execute(action, request(action, client, fields), %{client: client, options: opts},
+      max_attempts: 1
+    )
   end
 
   def completed(action, client, request, result) do
@@ -63,8 +65,8 @@ defmodule Jido.Chat.Telegram.ContractFixtures do
     assert result.extensions["traceparent"] == @trace
     assert result.extensions["tracestate"] == "contract=telegram"
     assert result.extensions["jidocausationid"] == request.id
-    assert {:ok, _} = action.validate_output(%{signal: result})
-    assert {:error, _} = action.validate_output(%{signal: request})
+    assert {:ok, _} = action.validate_output(result.data)
+    assert {:error, _} = action.validate_output(request.data)
     assert round_trip(result) == result
     result
   end
@@ -153,8 +155,8 @@ defmodule Jido.Chat.Telegram.ContractFixtures.MixedFlow do
   use Jido.Flow, name: "telegram_contract_mixed_flow"
 
   flow do
-    step("message", action: Jido.Chat.SendMessage, params: %{signal: input(:message)})
-    step("poll", action: Jido.Chat.Telegram.SendPoll, params: %{signal: input(:poll)}, needs: ["message"])
-    output(%{message: result("message", [:signal]), poll: result("poll", [:signal])})
+    step("message", action: Jido.Chat.SendMessage, params: input(:message))
+    step("poll", action: Jido.Chat.Telegram.SendPoll, params: input(:poll), needs: ["message"])
+    output(%{message: result("message"), poll: result("poll")})
   end
 end

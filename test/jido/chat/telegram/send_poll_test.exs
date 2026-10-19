@@ -19,7 +19,7 @@ defmodule Jido.Chat.Telegram.SendPollTest do
     use Jido.Flow, name: "telegram_poll_flow"
 
     flow do
-      step("poll", action: SendPoll, params: %{signal: input(:signal)})
+      step("poll", action: SendPoll, params: input(:signal))
       output(result("poll"))
     end
   end
@@ -44,8 +44,13 @@ defmodule Jido.Chat.Telegram.SendPollTest do
     assert length(Jido.Chat.actions()) == 23
 
     for action <- [SendPoll, PollFlow] do
-      assert {:ok, %{signal: completed}} =
-               Jido.Exec.run(action, %{signal: request()}, %{client: client(), options: [observer: self()]})
+      request = request()
+      params = if action == SendPoll, do: request.data, else: %{signal: request.data}
+
+      assert {:ok, data} =
+               Jido.Exec.run(action, params, %{client: client(), signal: request, options: [observer: self()]})
+
+      assert {:ok, completed} = SendPoll.reply(request, data, source: client().source)
 
       assert_receive {:poll, "private-token",
                       %{
@@ -73,11 +78,15 @@ defmodule Jido.Chat.Telegram.SendPollTest do
           %{command | data: Map.put(command.data, "client_id", "other")},
           %{command | data: Map.put(command.data, "options", ["one"])}
         ] do
-      assert {:error, _} = Jido.Exec.run(SendPoll, %{signal: invalid}, %{client: client(), options: [observer: self()]})
+      assert {:error, _} =
+               Jido.Chat.Telegram.ActionHelpers.execute(SendPoll, invalid, %{
+                 client: client(),
+                 options: [observer: self()]
+               })
     end
 
     assert {:error, %Jido.Chat.Error{signal: failed}} =
-             Jido.Exec.run(SendPoll, %{signal: command}, %{client: %{client() | credentials: %{}}})
+             Jido.Chat.Telegram.ActionHelpers.execute(SendPoll, command, %{client: %{client() | credentials: %{}}})
 
     assert failed.data["outcome"] == "not_attempted"
     refute_receive {:poll, _, _}
@@ -89,7 +98,7 @@ defmodule Jido.Chat.Telegram.SendPollTest do
           {{:ok, %{}}, :invalid_provider_result}
         ] do
       assert {:error, %Jido.Chat.Error{code: ^code, signal: failed}} =
-               Jido.Exec.run(SendPoll, %{signal: request()}, %{
+               Jido.Chat.Telegram.ActionHelpers.execute(SendPoll, request(), %{
                  client: client(),
                  options: [observer: self(), response: response]
                })

@@ -74,7 +74,7 @@
           "status": "active",
           "testable": true,
           "tests": [
-            "test every agent schema pins its wire envelope and accepts only its serialized request"
+            "test every Action schema matches its Signal data and validates serialized data"
           ]
         }
       }

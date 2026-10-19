@@ -18,7 +18,9 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
         case entry do
           :exec ->
             assert {:ok, %{signal: signal}} =
-                     Jido.Exec.run(action, %{signal: request}, %{client: client, options: options}, max_attempts: 1)
+                     Jido.Chat.Telegram.ActionHelpers.execute(action, request, %{client: client, options: options},
+                       max_attempts: 1
+                     )
 
             signal
 
@@ -64,7 +66,7 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
             %{request | data: Map.put(request.data, "request_id", self())},
             %{request | subject: "foreign-conversation"}
           ] do
-        assert {:error, _} = Jido.Exec.run(action, %{signal: bad}, %{client: client}, max_attempts: 1)
+        assert {:error, _} = Jido.Chat.Telegram.ActionHelpers.execute(action, bad, %{client: client}, max_attempts: 1)
       end
     end
 
@@ -75,7 +77,9 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
           %{"content_base64" => "invalid base64", "filename" => "report.txt"}
         ] do
       bad = %{request | data: Map.put(request.data, "source", source)}
-      assert {:error, _} = Jido.Exec.run(Telegram.SendDocument, %{signal: bad}, %{client: client}, max_attempts: 1)
+
+      assert {:error, _} =
+               Jido.Chat.Telegram.ActionHelpers.execute(Telegram.SendDocument, bad, %{client: client}, max_attempts: 1)
     end
 
     for invalid <- [
@@ -87,7 +91,7 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
     end
 
     request = F.request(Telegram.GetMe, client)
-    assert {:error, _} = Jido.Exec.run(Telegram.GetMe, %{signal: request}, %{}, max_attempts: 1)
+    assert {:error, _} = Jido.Chat.Telegram.ActionHelpers.execute(Telegram.GetMe, request, %{}, max_attempts: 1)
 
     for key <- [:reply_markup, :parse_mode, :format, :thread_id, :reply_to_id, :fallback_to_dm] do
       assert {:error, %Chat.Error{signal: failed}} = F.run(Telegram.GetMe, client, %{}, [{key, "legacy"}])
@@ -241,12 +245,14 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
     poll = F.request(Telegram.SendPoll, client)
 
     assert {:ok, %{message: message_result, poll: poll_result}} =
-             Jido.Exec.run(F.MixedFlow, %{message: message, poll: poll}, %{client: client}, max_attempts: 1)
+             Jido.Exec.run(F.MixedFlow, %{message: message.data, poll: poll.data}, %{client: client}, max_attempts: 1)
 
     assert_receive {:telegram_contract_wire, _, first_method, _, _, _}
     assert first_method == "sendMessage"
     assert_receive {:telegram_contract_wire, _, second_method, _, _, _}
     assert second_method == "sendPoll"
+    assert {:ok, message_result} = Chat.SendMessage.reply(message, message_result, source: client.source)
+    assert {:ok, poll_result} = Telegram.SendPoll.reply(poll, poll_result, source: client.source)
     assert message_result.extensions["jidocausationid"] == message.id
     assert poll_result.extensions["jidocausationid"] == poll.id
     assert F.round_trip(poll_result) == poll_result
@@ -255,8 +261,9 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
       Jido.Signal.Router.new!([{Telegram.Signal.SendPoll, Jido.Instruction.template(:action, Telegram.SendPoll)}])
 
     assert {:ok, [template]} = Jido.Signal.Router.route(router, poll)
-    assert {:ok, instruction} = Jido.Instruction.bind(template, %{signal: poll}, %{client: client})
-    assert {:ok, %{signal: completed}} = Jido.Exec.run(instruction)
+    assert {:ok, instruction} = Jido.Instruction.bind(template, poll.data, %{client: client, signal: poll})
+    assert {:ok, data} = Jido.Exec.run(instruction)
+    assert {:ok, completed} = Telegram.SendPoll.reply(poll, data, source: client.source)
     assert_receive {:telegram_contract_wire, _, "sendPoll", _, _, _}
     assert :ok = Jido.Signal.Dispatch.dispatch(completed, {:pid, [target: self()]})
     assert_receive {:signal, ^completed}
@@ -273,7 +280,7 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
     assert {:error, _} =
              Jido.Exec.run(
                F.MixedFlow,
-               %{message: message, poll: poll},
+               %{message: message.data, poll: poll.data},
                %{client: client, options: [contract_response: {:error, {:rejected, :forbidden}}]},
                max_attempts: 1
              )
@@ -283,7 +290,7 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
   end
 
   @tag obligation: "jido_chat_telegram.actions.I6"
-  test "every agent schema pins its wire envelope and accepts only its serialized request" do
+  test "every Action schema matches its Signal data and validates serialized data" do
     client = F.client()
 
     for row <- F.cases() do
@@ -291,38 +298,26 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
       definition = action.signal_definition()
       request = F.request(action, client)
       json = action.to_json()
+      assert json["input_schema"] == F.entry(definition)["data_schema"]
+      assert json["output_schema"] == F.entry(Module.concat(action, Completed))["data_schema"]
+      assert action.schema() == definition.schema()
+      assert action.output_schema() == Module.concat(action, Completed).schema()
+      data = request.data |> Jason.encode!() |> Jason.decode!()
 
-      for {key, entry} <- [
-            {"input_schema", F.entry(definition)},
-            {"output_schema", F.entry(Module.concat(action, Completed))}
-          ] do
-        envelope = json[key]["properties"]["signal"]
-        assert envelope["additionalProperties"] == false
-        assert Enum.sort(envelope["required"]) == Enum.sort(~w(id source type dataschema data))
-        assert envelope["properties"]["type"]["const"] == entry["type"]
-        assert envelope["properties"]["dataschema"]["const"] == entry["dataschema"]
-        assert envelope["properties"]["data"] == entry["data_schema"]
+      assert {:ok, completed} =
+               Jido.Exec.run(action, data, %{client: client, signal: request}, max_attempts: 1)
 
-        assert Map.keys(envelope["properties"]) --
-                 ~w(id source type specversion subject time datacontenttype dataschema data traceparent tracestate jidocausationid) ==
-                 []
-      end
-
-      wire = Jido.Signal.to_map(request)
-
-      assert {:ok, %{signal: completed}} =
-               Jido.Exec.run(action, %{"signal" => wire}, %{client: client}, max_attempts: 1)
-
-      assert completed.type == Module.concat(action, Completed).type()
+      assert completed["operation"] == request.type
+      assert {:ok, reply} = action.reply(request, completed, source: client.source)
+      assert F.round_trip(reply) == reply
       assert_receive {:telegram_contract_wire, _, _, _, _, _}
 
       for bad <- [
-            Map.put(wire, "token", "never-project-this"),
-            Map.put(wire, "dataschema", "urn:unknown"),
-            Map.put(wire, "type", Chat.Signal.SendMessage.type()),
-            put_in(wire, ["data", "request_id"], 42)
+            Map.put(data, "token", "never-project-this"),
+            Map.put(data, "request_id", 42),
+            %{"signal" => Jido.Signal.to_map(request)}
           ] do
-        assert {:error, _} = Jido.Exec.run(action, %{"signal" => bad}, %{client: client}, max_attempts: 1)
+        assert {:error, _} = Jido.Exec.run(action, bad, %{client: client, signal: request}, max_attempts: 1)
       end
     end
 

@@ -27,8 +27,9 @@ poll = Jido.Chat.Signal.Policy.new!(Jido.Chat.Telegram.Signal.SendPoll, %{
   "options" => ["Yes", "No"]
 })
 
-{:ok, %{signal: completed}} =
-  Jido.Exec.run(Jido.Chat.Telegram.SendPoll, %{signal: poll}, %{client: client})
+{:ok, data} =
+  Jido.Exec.run(Jido.Chat.Telegram.SendPoll, poll.data, %{client: client, signal: poll})
+{:ok, completed} = Jido.Chat.Telegram.SendPoll.reply(poll, data, source: client.source)
 ```
 
 All Telegram extension Actions use `Jido.ChatAction`. Each has a native request
@@ -63,8 +64,7 @@ photo = Jido.Chat.Signal.Policy.new!(Jido.Chat.Telegram.Signal.SendPhoto, %{
   "caption" => "SDK check"
 })
 
-{:ok, %{signal: uploaded}} =
-  Jido.Exec.run(Jido.Chat.Telegram.SendPhoto, %{signal: photo}, %{client: client})
+{:ok, uploaded} = Jido.Chat.execute(client, photo)
 
 ref = uploaded.data["result"]["resource_ref"]
 # %{"client_id" => client.id, "kind" => "media", "id" => "telegram://file/..."}
@@ -83,17 +83,18 @@ defmodule ReplyFlow do
 
   flow do
     step "draft", action: Jido.Chat.Telegram.SendDraft,
-      params: %{signal: input(:draft)}
+      params: input(:draft)
 
     step "send", action: Jido.Chat.SendMessage,
-      params: %{signal: input(:message)}, needs: ["draft"]
+      params: input(:message), needs: ["draft"]
 
     output(result("send"))
   end
 end
 
-{:ok, %{signal: completed}} =
-  Jido.Exec.run(ReplyFlow, %{draft: draft_signal, message: message_signal}, %{client: client})
+{:ok, completed_data} =
+  Jido.Exec.run(ReplyFlow, %{draft: draft_signal.data, message: message_signal.data}, %{client: client})
+{:ok, completed} = Jido.Chat.SendMessage.reply(message_signal, completed_data, source: client.source)
 ```
 
 Use the main functions for common calls:
@@ -255,9 +256,11 @@ Telegram adds 14 Actions to the 23 core Actions. Its configured catalog contains
 128 Signal definitions. The old `command_routes/0` is removed. `GetWebhookInfo`
 uses the query type `jido.chat.telegram.query.get_webhook_info`.
 
-Agent Action JSON schemas include the full request envelope and typed data.
-Serialized input at `%{"signal" => envelope}` is decoded before execution. Secrets
-and streaming sources stay in private context. Failures retain only safe codes,
+Action JSON schemas match the request and completion data schemas. Pass request
+data to Exec. A request Signal can be supplied as `context.signal` to keep its
+identity and trace. Use `reply/3` to build a completion Signal. Decode serialized
+Signals with the Catalog before execution. Secrets and streaming sources stay
+in private context. Failures retain only safe codes,
 outcomes, and optional `retry_after_ms`; raw Telegram errors are not exposed.
 A partial stream failure or execution deadline has an unknown provider outcome.
 

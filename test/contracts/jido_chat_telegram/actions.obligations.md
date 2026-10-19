@@ -53,8 +53,8 @@ context supplies the Client, credentials, and transport options.
 - **kind:** ordering
 - **status:** active
 
-### jido_chat_telegram.actions.I6 — Agent discovery describes exact accepted wire envelopes
-- **scope:** to_json input and output schemas and serialized input for all fourteen Actions.
-- **must:** Include the full Signal envelope, exact request and completion type and dataschema, and the reviewed typed data schemas. Accept valid serialized request envelopes through Exec. Reject extra envelope fields, mismatched identities, and malformed data before transport I/O.
+### jido_chat_telegram.actions.I6 — Agent discovery uses the native SignalAction data contracts
+- **scope:** to_json input and output schemas and serialized data for all fourteen Actions.
+- **must:** Match the request and completion Signal data schemas. Accept serialized request data through Exec, with an optional request Signal in context. Build a completion Signal with reply/3. Reject envelope wrappers, private fields, mismatched identities, and malformed data before transport I/O.
 - **kind:** persisted-format
 - **status:** active

@@ -70,7 +70,10 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     do: action.signal_definition().new!(Map.merge(%{"client_id" => "telegram", "request_id" => "request"}, data))
 
   defp run(action, data, opts \\ []) do
-    Jido.Exec.run(action, %{signal: request(action, data)}, %{client: client(), options: [observer: self()] ++ opts},
+    Jido.Chat.Telegram.ActionHelpers.execute(
+      action,
+      request(action, data),
+      %{client: client(), options: [observer: self()] ++ opts},
       max_attempts: 1
     )
   end
@@ -161,7 +164,10 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     }
 
     assert {:error, _} =
-             Jido.Exec.run(Jido.Chat.SendMessage, %{signal: invalid}, %{client: client(), options: [observer: self()]})
+             Jido.Chat.Telegram.ActionHelpers.execute(Jido.Chat.SendMessage, invalid, %{
+               client: client(),
+               options: [observer: self()]
+             })
 
     refute_receive {:wire, _, _, _}
   end
@@ -261,7 +267,7 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     req = Jido.Chat.AdapterTestKit.Factories.operation_request(client(), :post_ephemeral)
 
     assert {:error, %Jido.Chat.Error{code: :unsupported}} =
-             Jido.Exec.run(Jido.Chat.PostEphemeral, %{signal: req}, %{client: client()})
+             Jido.Chat.Telegram.ActionHelpers.execute(Jido.Chat.PostEphemeral, req, %{client: client()})
 
     refute_receive {:wire, _, _, _}
   end

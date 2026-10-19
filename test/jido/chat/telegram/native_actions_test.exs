@@ -61,7 +61,10 @@ defmodule Jido.Chat.Telegram.NativeActionsTest do
   end
 
   defp execute(action, fields, opts \\ []) do
-    Jido.Exec.run(action, %{signal: request(action, fields)}, %{client: client(), options: [observer: self()] ++ opts},
+    Jido.Chat.Telegram.ActionHelpers.execute(
+      action,
+      request(action, fields),
+      %{client: client(), options: [observer: self()] ++ opts},
       max_attempts: 1
     )
   end
@@ -165,7 +168,10 @@ defmodule Jido.Chat.Telegram.NativeActionsTest do
           %{original | data: Map.put(original.data, "client_id", "other")}
         ] do
       assert {:error, _} =
-               Jido.Exec.run(Telegram.SendDocument, %{signal: command}, %{client: client(), options: [observer: self()]})
+               Jido.Chat.Telegram.ActionHelpers.execute(Telegram.SendDocument, command, %{
+                 client: client(),
+                 options: [observer: self()]
+               })
     end
 
     refute_receive {:wire, _, _}
@@ -211,18 +217,22 @@ defmodule Jido.Chat.Telegram.NativeActionsTest do
         })
 
       assert {:error, _} =
-               Jido.Exec.run(action, %{signal: %{valid | data: Map.put(valid.data, "caption", "ignored")}}, %{
-                 client: client(),
-                 options: [observer: self()]
-               })
+               Jido.Chat.Telegram.ActionHelpers.execute(
+                 action,
+                 %{valid | data: Map.put(valid.data, "caption", "ignored")},
+                 %{
+                   client: client(),
+                   options: [observer: self()]
+                 }
+               )
     end
 
     draft = request(Telegram.SendDraft, %{"room_id" => "123", "draft_id" => 7, "text" => "Hi"})
 
     assert {:error, _} =
-             Jido.Exec.run(
+             Jido.Chat.Telegram.ActionHelpers.execute(
                Telegram.SendDraft,
-               %{signal: %{draft | data: Map.put(draft.data, "room_id", "@channel")}},
+               %{draft | data: Map.put(draft.data, "room_id", "@channel")},
                %{client: client(), options: [observer: self()]}
              )
 

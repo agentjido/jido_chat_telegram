@@ -46,11 +46,10 @@ defmodule Jido.Chat.Telegram.Streaming do
 
   defp consume(chunk, {:ok, state}) do
     text = Jido.Chat.StreamChunk.markdown_fallback(chunk)
-    {renderer, snapshot} = snapshot(state, text)
-    state = %{state | renderer: renderer, text: state.text <> text}
     now = System.monotonic_time(:millisecond)
-
     due = is_nil(state.last_write) or now - state.last_write >= state.interval
+    {renderer, snapshot} = snapshot(state, text, due)
+    state = %{state | renderer: renderer, text: state.text <> text}
 
     if snapshot not in [nil, "", state.last_text] and due do
       case write(state, snapshot) do
@@ -62,12 +61,18 @@ defmodule Jido.Chat.Telegram.Streaming do
     end
   end
 
-  defp snapshot(%{request: %{data: %{"format" => "markdown"}}} = state, text) do
-    {renderer, _changed} = StreamRenderer.push(state.renderer, text)
-    {renderer, StreamRenderer.snapshot(renderer)}
+  defp snapshot(%{request: %{data: %{"format" => "markdown"}}} = state, text, due) do
+    renderer = StreamRenderer.append(state.renderer, text)
+
+    if due do
+      {renderer, _changed} = StreamRenderer.push(renderer, "")
+      {renderer, StreamRenderer.snapshot(renderer)}
+    else
+      {renderer, nil}
+    end
   end
 
-  defp snapshot(state, text) do
+  defp snapshot(state, text, _due) do
     snapshot = state.text <> text
     {state.renderer, if(String.trim(snapshot) == "", do: nil, else: snapshot)}
   end
@@ -140,8 +145,7 @@ defmodule Jido.Chat.Telegram.Streaming do
 
     with {:ok, signal} <-
            Jido.Chat.Signal.Policy.reply(action.signal_definition(), data, state.request, source: state.client.source),
-         {:ok, %{signal: completed}} <-
-           Jido.Exec.run(action, %{signal: signal}, %{client: state.client, options: state.opts}, max_attempts: 1) do
+         {:ok, completed} <- Jido.Chat.execute(state.client, signal, options: state.opts) do
       {:ok, completed.data["result"]}
     end
   end

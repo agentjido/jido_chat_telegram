@@ -21,8 +21,8 @@ defmodule Jido.Chat.Telegram.StreamTextTest do
     use Jido.Flow, name: "stream_text_test_flow"
 
     flow do
-      step("deliver", action: Jido.Chat.StreamText, params: %{signal: input(:signal)})
-      output(%{signal: result("deliver", [:signal])})
+      step("deliver", action: Jido.Chat.StreamText, params: input(:signal))
+      output(%{signal: result("deliver")})
     end
   end
 
@@ -111,6 +111,21 @@ defmodule Jido.Chat.Telegram.StreamTextTest do
     refute Map.has_key?(first, "reply_markup")
   end
 
+  test "MDEx link previews keep the partial URL private and final source exact" do
+    assert {:ok, _} =
+             stream(["Read [guide](https://ji", "do.run)", "\n\n"],
+               format: :markdown,
+               update_interval_ms: 0
+             )
+
+    assert [{"sendRichMessageDraft", first, _}, {"sendRichMessageDraft", second, _}, {"sendRichMessage", final, _}] =
+             calls()
+
+    assert first["rich_message"] == %{"markdown" => "Read [guide](mdex:incomplete-link)"}
+    assert second["rich_message"] == %{"markdown" => "Read [guide](https://jido.run)"}
+    assert final["rich_message"] == %{"markdown" => "Read [guide](https://jido.run)\n\n"}
+  end
+
   test "plain and HTML text do not get Markdown repairs" do
     for format <- [:plain, :html] do
       assert {:ok, _} = stream(["*literal"], format: format)
@@ -134,6 +149,19 @@ defmodule Jido.Chat.Telegram.StreamTextTest do
 
     assert [{"sendMessage", first, _}, {"editMessageText", final, _}] = calls()
     assert first["text"] == "one" and final["text"] == "one two three"
+  end
+
+  test "throttled Markdown chunks keep their original syntax until final delivery" do
+    assert {:ok, _} =
+             Jido.Chat.stream_text(client(), "-123", ["**one", " two", " three**"],
+               format: :markdown,
+               update_interval_ms: 60_000,
+               options: [observer: self()]
+             )
+
+    assert [{"sendRichMessage", first, _}, {"editMessageText", final, _}] = calls()
+    assert first["rich_message"] == %{"markdown" => "**one**"}
+    assert final["rich_message"] == %{"markdown" => "**one two three**"}
   end
 
   test "an unchanged final snapshot does not cause a duplicate edit" do
@@ -228,10 +256,15 @@ defmodule Jido.Chat.Telegram.StreamTextTest do
   test "native Flow runs the same StreamText Action with the source in private context" do
     request = Signal.StreamText.new!(%{"client_id" => "telegram", "request_id" => "r", "room_id" => "123"})
 
-    assert {:ok, %{signal: completed}} =
-             Jido.Exec.run(Flow, %{signal: request}, %{client: client(), options: [stream: ["flow"], observer: self()]},
+    assert {:ok, %{signal: data}} =
+             Jido.Exec.run(
+               Flow,
+               %{signal: request.data},
+               %{client: client(), signal: request, options: [stream: ["flow"], observer: self()]},
                max_attempts: 1
              )
+
+    assert {:ok, completed} = Jido.Chat.StreamText.reply(request, data, source: client().source)
 
     assert completed.extensions["jidocausationid"] == request.id
     assert {:ok, json} = Jido.Signal.Serialization.serialize(completed)

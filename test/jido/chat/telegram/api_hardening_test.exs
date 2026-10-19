@@ -165,10 +165,11 @@ defmodule Jido.Chat.Telegram.APIHardeningTest do
 
     for {definition, action} <- Telegram.operations() do
       assert {definition, action} in Chat.operations(client())
-      schema = action.to_json()["input_schema"]["properties"]["signal"]["properties"]
-      assert schema["type"]["const"] == definition.type()
-      assert schema["data"]["type"] == "object"
-      assert "request_id" in schema["data"]["required"]
+      schema = action.to_json()["input_schema"]
+      assert action.type() == definition.type()
+      assert action.schema() == definition.schema()
+      assert schema["type"] == "object"
+      assert "request_id" in schema["required"]
     end
 
     assert Telegram.Signal.GetWebhookInfo.type() == "jido.chat.telegram.query.get_webhook_info"
