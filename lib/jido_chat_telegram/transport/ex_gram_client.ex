@@ -7,6 +7,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
 
   alias ExGram.Model.{
     InputRichMessage,
+    InputPollOption,
     ReactionTypeCustomEmoji,
     ReactionTypeEmoji,
     ReactionTypePaid,
@@ -47,6 +48,9 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     "caption" => :caption,
     "photo" => :photo,
     "document" => :document,
+    "sticker" => :sticker,
+    "animation" => :animation,
+    "video_note" => :video_note,
     "file_id" => :file_id,
     "media" => :media,
     "action" => :action,
@@ -66,8 +70,12 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
   }
 
   @impl true
+  def call(token, "getMe", _payload, opts) do
+    ex_gram_module(opts).get_me(ex_gram_runtime_opts(token, opts))
+  end
+
   def call(token, "sendMessage", payload, opts) do
-    params = atomize_payload(payload)
+    params = payload |> atomize_payload() |> build_reply_parameters()
     chat_id = Map.fetch!(params, :chat_id)
     text = Map.fetch!(params, :text)
     method_opts = params |> Map.drop([:chat_id, :text]) |> Map.to_list()
@@ -76,6 +84,33 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
       chat_id,
       text,
       method_opts ++ ex_gram_runtime_opts(token, opts)
+    )
+  end
+
+  def call(token, "sendPoll", payload, opts) do
+    options = Enum.map(payload["options"], fn option -> %InputPollOption{text: option["text"]} end)
+
+    method_opts =
+      []
+      |> then(fn acc ->
+        if Map.has_key?(payload, "message_thread_id"),
+          do: Keyword.put(acc, :message_thread_id, normalize_integer_id(payload["message_thread_id"])),
+          else: acc
+      end)
+      |> then(fn acc ->
+        if Map.has_key?(payload, "is_anonymous"),
+          do: Keyword.put(acc, :is_anonymous, payload["is_anonymous"]),
+          else: acc
+      end)
+
+    ex_gram_module(opts).send_poll(
+      payload["chat_id"],
+      payload["question"],
+      options,
+      method_opts ++
+        (Map.take(atomize_payload(payload), [:reply_markup, :reply_parameters])
+         |> build_reply_parameters()
+         |> Map.to_list()) ++ ex_gram_runtime_opts(token, opts)
     )
   end
 
@@ -178,6 +213,20 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     )
   end
 
+  def call(token, "downloadFile", %{"file_path" => path}, opts) do
+    base_url = Keyword.get(opts, :url) || Keyword.get(opts, :base_url, "https://api.telegram.org")
+
+    options =
+      [url: String.trim_trailing(base_url, "/") <> "/file/bot#{token}/#{path}", decode_body: false, retry: false] ++
+        Keyword.take(opts, [:connect_options, :receive_timeout, :finch, :plug])
+
+    case Req.get(options) do
+      {:ok, %Req.Response{status: 200, body: bytes}} when is_binary(bytes) -> {:ok, bytes}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :download_failed}
+    end
+  end
+
   def call(token, "getFile", payload, opts) do
     params = atomize_payload(payload)
     file_id = Map.fetch!(params, :file_id)
@@ -218,7 +267,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
   end
 
   def call(token, "sendPhoto", payload, opts) do
-    params = atomize_payload(payload)
+    params = payload |> atomize_payload() |> build_reply_parameters()
     chat_id = Map.fetch!(params, :chat_id)
     photo = Map.fetch!(params, :photo)
     method_opts = params |> Map.drop([:chat_id, :photo]) |> Map.to_list()
@@ -231,7 +280,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
   end
 
   def call(token, "sendDocument", payload, opts) do
-    params = atomize_payload(payload)
+    params = payload |> atomize_payload() |> build_reply_parameters()
     chat_id = Map.fetch!(params, :chat_id)
     document = Map.fetch!(params, :document)
     method_opts = params |> Map.drop([:chat_id, :document]) |> Map.to_list()
@@ -250,6 +299,34 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
 
     ex_gram_module(opts).answer_callback_query(
       callback_query_id,
+      method_opts ++ ex_gram_runtime_opts(token, opts)
+    )
+  end
+
+  def call(token, "sendSticker", payload, opts) do
+    params = atomize_payload(payload)
+    method_opts = params |> Map.drop([:chat_id, :sticker]) |> Map.to_list()
+    ex_gram_module(opts).send_sticker(params.chat_id, params.sticker, method_opts ++ ex_gram_runtime_opts(token, opts))
+  end
+
+  def call(token, "sendAnimation", payload, opts) do
+    params = atomize_payload(payload)
+    method_opts = params |> Map.drop([:chat_id, :animation]) |> Map.to_list()
+
+    ex_gram_module(opts).send_animation(
+      params.chat_id,
+      params.animation,
+      method_opts ++ ex_gram_runtime_opts(token, opts)
+    )
+  end
+
+  def call(token, "sendVideoNote", payload, opts) do
+    params = atomize_payload(payload)
+    method_opts = params |> Map.drop([:chat_id, :video_note]) |> Map.to_list()
+
+    ex_gram_module(opts).send_video_note(
+      params.chat_id,
+      params.video_note,
       method_opts ++ ex_gram_runtime_opts(token, opts)
     )
   end
@@ -362,7 +439,25 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
         end
     end)
     |> normalize_message_ids()
+    |> build_keyboard()
   end
+
+  defp build_keyboard(%{reply_markup: %{"inline_keyboard" => rows}} = params) do
+    rows =
+      Enum.map(rows, fn row ->
+        Enum.map(row, fn button ->
+          %ExGram.Model.InlineKeyboardButton{
+            text: button["text"],
+            callback_data: button["callback_data"],
+            url: button["url"]
+          }
+        end)
+      end)
+
+    Map.put(params, :reply_markup, %ExGram.Model.InlineKeyboardMarkup{inline_keyboard: rows})
+  end
+
+  defp build_keyboard(params), do: params
 
   defp build_rich_message(%InputRichMessage{} = rich_message), do: rich_message
 
@@ -399,12 +494,19 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     Map.put(params, :reply_parameters, %ReplyParameters{message_id: message_id})
   end
 
+  defp build_reply_parameters(%{reply_to_message_id: id} = params) do
+    params
+    |> Map.delete(:reply_to_message_id)
+    |> Map.put(:reply_parameters, %ReplyParameters{message_id: normalize_integer_id(id)})
+  end
+
   defp build_reply_parameters(params), do: params
 
   defp normalize_message_ids(params) do
     params
     |> normalize_message_id(:message_id)
     |> normalize_message_id(:reply_to_message_id)
+    |> normalize_message_id(:message_thread_id)
   end
 
   defp normalize_message_id(params, key) do
@@ -423,7 +525,11 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
 
   defp normalize_integer_id(value), do: value
 
-  defp ex_gram_module(opts), do: Keyword.get(opts, :ex_gram_module, ExGram)
+  defp ex_gram_module(opts) do
+    module = Keyword.get(opts, :ex_gram_module, ExGram)
+    Code.ensure_loaded!(module)
+    module
+  end
 
   defp ex_gram_http_adapter(opts) do
     ex_gram_adapter(opts)
@@ -510,7 +616,7 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClient do
     Keyword.get(
       opts,
       :ex_gram_adapter,
-      Application.get_env(:jido_chat_telegram, :ex_gram_adapter, ExGramAdapter)
+      ExGramAdapter
     )
   end
 

@@ -11,6 +11,11 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
       {:ok, %{message_id: 99, chat: %{id: chat_id}, date: 1_706_745_600}}
     end
 
+    def send_poll(chat_id, question, options, opts) do
+      send(self(), {:send_poll, chat_id, question, options, opts})
+      {:ok, %{message_id: 42}}
+    end
+
     def edit_message_text(text, opts) do
       send(self(), {:edit_message_text, text, opts})
       {:ok, true}
@@ -77,6 +82,30 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
     end
   end
 
+  test "portable keyboard maps become ExGram models only at the transport boundary" do
+    payload = %{
+      "chat_id" => "123",
+      "text" => "Choose",
+      "reply_markup" => %{
+        "inline_keyboard" => [
+          [%{"text" => "Confirm", "callback_data" => "confirm:1"}, %{"text" => "Help", "url" => "https://example.com"}]
+        ]
+      }
+    }
+
+    assert {:ok, _} = ExGramClient.call("private-token", "sendMessage", payload, ex_gram_module: MockExGram)
+    assert_receive {:send_message, "123", "Choose", opts}
+    assert %ExGram.Model.InlineKeyboardMarkup{inline_keyboard: [[confirm, help]]} = opts[:reply_markup]
+    assert %ExGram.Model.InlineKeyboardButton{callback_data: "confirm:1"} = confirm
+    assert %ExGram.Model.InlineKeyboardButton{url: "https://example.com"} = help
+
+    encoded =
+      ExGram.Adapter.filter_map(%{reply_markup: opts[:reply_markup]}) |> ExGram.Adapter.encode() |> Jason.decode!()
+
+    assert get_in(encoded, ["reply_markup", "inline_keyboard", Access.at(0), Access.at(0), "callback_data"]) ==
+             "confirm:1"
+  end
+
   defmodule MockHttpAdapter do
     @behaviour ExGram.Adapter
 
@@ -100,6 +129,42 @@ defmodule Jido.Chat.Telegram.Transport.ExGramClientTest do
     assert Keyword.get(opts, :parse_mode) == "HTML"
     assert Keyword.get(opts, :token) == "abc"
     assert Keyword.get(opts, :adapter) == ExGramAdapter
+  end
+
+  test "call/4 dispatches sendPoll with typed options via ExGram" do
+    assert Code.ensure_loaded?(ExGram) and function_exported?(ExGram, :send_poll, 4)
+
+    assert {:ok, %{message_id: 42}} =
+             ExGramClient.call(
+               "abc",
+               "sendPoll",
+               %{
+                 "chat_id" => "123",
+                 "question" => "Ship today?",
+                 "options" => [%{"text" => "Yes"}, %{"text" => "No"}],
+                 "message_thread_id" => "7",
+                 "is_anonymous" => false
+               },
+               ex_gram_module: MockExGram
+             )
+
+    assert_received {:send_poll, "123", "Ship today?", [%ExGram.Model.InputPollOption{text: "Yes"}, _], opts}
+    assert opts[:token] == "abc"
+    assert opts[:message_thread_id] == 7
+    assert opts[:is_anonymous] == false
+  end
+
+  test "plain messages and media use typed reply_parameters instead of the removed reply field" do
+    for {method, field} <- [{"sendMessage", "text"}, {"sendPhoto", "photo"}, {"sendDocument", "document"}] do
+      assert {:ok, _} =
+               ExGramClient.call("abc", method, %{"chat_id" => 1, field => "body", "reply_to_message_id" => "7"},
+                 ex_gram_module: MockExGram
+               )
+
+      assert_receive {_, 1, "body", opts}
+      assert opts[:reply_parameters] == %ExGram.Model.ReplyParameters{message_id: 7}
+      refute Keyword.has_key?(opts, :reply_to_message_id)
+    end
   end
 
   test "call/4 forwards url as ExGram adapter opts" do

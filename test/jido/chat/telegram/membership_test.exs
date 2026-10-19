@@ -5,14 +5,14 @@ defmodule Jido.Chat.Telegram.MembershipTest do
   alias Jido.Chat.Telegram.Membership
 
   defmodule FixtureAdapter do
-    def channel_type, do: :telegram
-    def signal_protocol, do: 1
-    def configure_binding(opts), do: {:ok, opts}
-    def normalize_event(_binding, _input), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
+    def channel_type, do: :fixture
+    def capabilities, do: %{}
+    def invoke(_, _, _), do: {:error, :unsupported}
+    def normalize(_binding, _input, _opts), do: Jido.Chat.Signal.Policy.error(:invalid_delivery)
   end
 
   setup do
-    {:ok, binding} = Jido.Chat.bind(FixtureAdapter, id: "telegram-membership", bot_id: 999)
+    {:ok, binding} = new_client(FixtureAdapter, id: "telegram-membership", bot_id: 999)
     %{binding: binding}
   end
 
@@ -142,5 +142,18 @@ defmodule Jido.Chat.Telegram.MembershipTest do
       assert {:error, %Jido.Chat.Errors.Contract{}} =
                Membership.normalize(context.binding, "update:6", "chat_member", payload)
     end
+  end
+
+  defp new_client(adapter, opts) do
+    Jido.Chat.Client.new(adapter,
+      id: opts[:id],
+      credentials: opts |> Keyword.take([:token, :secret_token, :signing_secret]) |> Map.new(),
+      transport: opts[:transport] || adapter_transport(adapter),
+      config: Keyword.drop(opts, [:id, :token, :secret_token, :signing_secret, :transport])
+    )
+  end
+
+  defp adapter_transport(adapter) do
+    if function_exported?(adapter, :default_transport, 0), do: adapter.default_transport(), else: nil
   end
 end

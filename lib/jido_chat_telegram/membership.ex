@@ -1,16 +1,7 @@
 defmodule Jido.Chat.Telegram.Membership do
-  @moduledoc """
-  Maps Telegram membership updates to one shared typed membership fact.
+  @moduledoc false
 
-  The full adapter normalizer owns delivery validation and transport handling.
-  This mapper selects portable membership evidence. It does not change grants,
-  runtime membership, or presence.
-
-  Provider fields: https://core.telegram.org/bots/api#chatmemberupdated and
-  https://core.telegram.org/bots/api#chatmemberrestricted.
-  """
-
-  alias Jido.Chat.Binding
+  alias Jido.Chat.Client
   alias Jido.Chat.Signal.{Identity, MembershipChanged, Policy}
 
   @permissions ~w(can_send_messages can_send_audios can_send_documents can_send_photos
@@ -20,13 +11,13 @@ defmodule Jido.Chat.Telegram.Membership do
                   can_edit_tag)
 
   @doc false
-  @spec normalize(Binding.t(), String.t(), String.t(), map()) ::
+  @spec normalize(Client.t(), String.t(), String.t(), map()) ::
           {:ok, Jido.Signal.t()} | {:error, Jido.Chat.Errors.Contract.t()}
-  @spec normalize(Binding.t(), String.t(), String.t(), map(), keyword()) ::
+  @spec normalize(Client.t(), String.t(), String.t(), map(), keyword()) ::
           {:ok, Jido.Signal.t()} | {:error, Jido.Chat.Errors.Contract.t()}
-  def normalize(binding, delivery_id, kind, update, opts \\ [])
+  def normalize(client, delivery_id, kind, update, opts \\ [])
 
-  def normalize(%Binding{} = binding, delivery_id, kind, update, opts)
+  def normalize(%Client{} = client, delivery_id, kind, update, opts)
       when is_binary(delivery_id) and kind in ["chat_member", "my_chat_member"] and is_map(update) and is_list(opts) do
     with room when is_binary(room) <- update |> field("chat") |> field("id") |> id(),
          member when is_map(member) <- field(update, "new_chat_member"),
@@ -42,14 +33,14 @@ defmodule Jido.Chat.Telegram.Membership do
         "room_id" => room,
         "participant_id" => participant,
         "actor_id" => update |> field("from") |> field("id") |> id(),
-        "bot_self" => kind == "my_chat_member" or participant == id(Keyword.get(binding.options, :bot_id)),
+        "bot_self" => kind == "my_chat_member" or participant == id(Keyword.get(Client.options(client), :bot_id)),
         "transition" => transition,
         "evidence" => evidence,
         "previous" => previous,
         "current" => current
       }
 
-      MembershipChanged.new(data, source: binding.source, subject: Identity.conversation_subject(binding.id, room))
+      MembershipChanged.new(data, source: client.source, subject: Identity.conversation_subject(client.id, room))
     else
       {:error, _} = error -> error
       _ -> Policy.error(:invalid_delivery)

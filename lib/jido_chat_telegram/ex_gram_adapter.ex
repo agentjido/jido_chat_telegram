@@ -55,17 +55,20 @@ defmodule Jido.Chat.Telegram.ExGramAdapter do
   end
 
   defp put_finch_options(req, opts) do
-    connect_options =
-      case Keyword.fetch(opts, :connect_options) do
-        {:ok, connect_options} -> connect_options
-        :error -> [timeout: Keyword.get(opts, :connect_timeout, 30_000)]
+    connection_options =
+      cond do
+        Keyword.has_key?(opts, :connect_options) -> [connect_options: opts[:connect_options]]
+        opts[:finch] -> []
+        true -> [connect_options: [timeout: Keyword.get(opts, :connect_timeout, 30_000)]]
       end
 
     req
     |> Req.Request.merge_options(
-      connect_options: connect_options,
-      pool_timeout: Keyword.get(opts, :pool_timeout, 5_000),
-      receive_timeout: Keyword.get(opts, :receive_timeout, 60_000)
+      connection_options ++
+        [
+          pool_timeout: Keyword.get(opts, :pool_timeout, 5_000),
+          receive_timeout: Keyword.get(opts, :receive_timeout, 60_000)
+        ]
     )
     |> maybe_merge_finch(Keyword.get(opts, :finch))
   end

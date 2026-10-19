@@ -1,6 +1,6 @@
 defmodule Jido.Chat.Telegram.Normalizer do
-  @moduledoc "Private Telegram update mapper for complete typed deliveries."
-  alias Jido.Chat.{Binding, Delivery, Resources, WebhookRequest}
+  @moduledoc false
+  alias Jido.Chat.{Client, Delivery}
 
   alias Jido.Chat.Signal.{
     ActionReceived,
@@ -12,7 +12,9 @@ defmodule Jido.Chat.Telegram.Normalizer do
     Policy,
     ReactionAdded,
     ReactionRemoved,
-    SlashCommandReceived
+    SlashCommandReceived,
+    ThreadStarted,
+    ThreadChanged
   }
 
   alias Jido.Chat.Telegram.Membership
@@ -20,33 +22,27 @@ defmodule Jido.Chat.Telegram.Normalizer do
   @message_kinds ~w(message channel_post edited_message edited_channel_post)
   @kinds @message_kinds ++ ~w(chat_member my_chat_member message_reaction callback_query)
   @limits [:signal_too_large, :delivery_too_large, :too_many_signals, :too_many_failures]
-  @private_media_fields ~w(file_unique_id type is_animated is_video emoji set_name custom_emoji_id needs_repainting)a
 
   @doc false
-  @spec normalize(Binding.t(), term()) :: {:ok, Delivery.t()} | {:error, Jido.Chat.Errors.Contract.t()}
-  def normalize(binding, %WebhookRequest{payload: payload}), do: normalize(binding, payload)
+  @spec normalize(Client.t(), term()) :: {:ok, Delivery.t()} | {:error, Jido.Chat.Errors.Contract.t()}
 
-  def normalize(%Binding{} = binding, input) when is_map(input) or is_list(input) do
+  def normalize(%Client{} = client, input) when is_map(input) or is_list(input) do
     updates = if is_list(input), do: input, else: [input]
-    tracker = {__MODULE__, make_ref()}
-    Process.put(tracker, [])
 
     result =
       try do
         ids = Enum.map(updates, &update_identity/1)
         delivery_id = if is_map(input), do: hd(ids), else: "telegram:batch:" <> digest(ids)
-        context = %{binding: binding, delivery: delivery_id, tracker: tracker}
+        context = %{client: client, delivery: delivery_id}
 
         with {:ok, signals} <- map_updates(context, Enum.zip(updates, ids)),
-             do: Delivery.new(binding, delivery_id, signals)
+             do: Delivery.new(client, delivery_id, signals)
       rescue
         _ -> Policy.error(:invalid_delivery)
       catch
         _, _ -> Policy.error(:invalid_delivery)
       end
 
-    if match?({:error, _}, result), do: Enum.each(Process.get(tracker, []), &Resources.cancel(binding, &1))
-    Process.delete(tracker)
     result
   end
 
@@ -76,7 +72,6 @@ defmodule Jido.Chat.Telegram.Normalizer do
         Enum.reduce_while(kinds, {:ok, []}, fn kind, {:ok, acc} ->
           payload = field(update, kind)
           room = payload |> field("chat") |> field("id") |> identifier()
-          existing_refs = Process.get(context.tracker)
 
           case map_item(context, kind, payload, id) do
             {:ok, signals} ->
@@ -86,10 +81,6 @@ defmodule Jido.Chat.Telegram.Normalizer do
               {:halt, error}
 
             _ ->
-              created_refs = Process.get(context.tracker) -- existing_refs
-              Enum.each(created_refs, &Resources.cancel(context.binding, &1))
-              Process.put(context.tracker, existing_refs)
-
               case failed(context, id, kind, index, room, "invalid_item") do
                 {:ok, signals} -> {:cont, {:ok, acc ++ signals}}
                 error -> {:halt, error}
@@ -102,56 +93,61 @@ defmodule Jido.Chat.Telegram.Normalizer do
   defp map_update(context, _update, id, index), do: failed(context, id, "invalid", index, nil, "invalid_item")
 
   defp map_item(context, kind, payload, id) when kind in ~w(chat_member my_chat_member) do
-    Membership.normalize(context.binding, context.delivery, kind, payload, item_id: id <> ":" <> kind)
+    Membership.normalize(context.client, context.delivery, kind, payload, item_id: id <> ":" <> kind)
   end
 
   defp map_item(context, kind, message, id) when kind in @message_kinds and is_map(message) do
     room = message |> field("chat") |> field("id") |> identifier()
     message_id = message |> field("message_id") |> identifier()
-    sender = sender(field(message, "from") || field(message, "sender_chat") || channel_sender(message), context.binding)
+    sender = sender(field(message, "from") || field(message, "sender_chat") || channel_sender(message), context.client)
     text = field(message, "text") || field(message, "caption") || ""
     thread = message |> field("message_thread_id") |> identifier()
     service = field(message, "new_chat_members") || field(message, "left_chat_member")
 
-    if service do
-      service_members(context, message, id, room)
-    else
-      with true <- is_binary(room) and is_binary(message_id),
-           subject <- Identity.conversation_subject(context.binding.id, room),
-           {:ok, media} <- media(context, message) do
-        base = %{
-          "room_id" => room,
-          "message_id" => message_id,
-          "sender" => sender,
-          "text" => text,
-          "thread_id" => thread,
-          "media" => media,
-          "timestamp" => timestamp(field(message, "edit_date") || field(message, "date"))
-        }
+    cond do
+      topic_service?(message) ->
+        topic_event(context, message, id, room, thread)
 
-        base = select_present(base)
-        edited = kind in ~w(edited_message edited_channel_post)
-        definition = if edited, do: MessageUpdated, else: MessageReceived
+      service ->
+        service_members(context, message, id, room)
 
-        data =
-          if edited do
-            base
-          else
-            base
-            |> Map.put("conversation_kind", conversation_kind(message |> field("chat") |> field("type")))
-            |> optional("conversation_name", message |> field("chat") |> field("title"))
-            |> optional("reply_to_id", message |> field("reply_to_message") |> field("message_id") |> identifier())
-            |> optional("reply_context", reply_context(field(message, "reply_to_message"), context.binding))
-            |> Map.merge(mentions(message, context.binding))
-          end
+      true ->
+        with true <- is_binary(room) and is_binary(message_id),
+             subject <- Identity.conversation_subject(context.client.id, room),
+             {:ok, media} <- media(context, message) do
+          base = %{
+            "room_id" => room,
+            "message_id" => message_id,
+            "sender" => sender,
+            "text" => text,
+            "thread_id" => thread,
+            "media" => media,
+            "timestamp" => timestamp(field(message, "edit_date") || field(message, "date"))
+          }
 
-        with {:ok, signal} <- build(context, definition, id <> ":" <> kind, data, subject),
-             {:ok, command} <- slash(context, message, id, room, sender, thread, edited),
-             do: {:ok, [signal | command]}
-      else
-        {:error, %Jido.Chat.Errors.Contract{}} = error -> error
-        _ -> Policy.error(:invalid_delivery)
-      end
+          base = select_present(base)
+          edited = kind in ~w(edited_message edited_channel_post)
+          definition = if edited, do: MessageUpdated, else: MessageReceived
+
+          data =
+            if edited do
+              base
+            else
+              base
+              |> Map.put("conversation_kind", conversation_kind(message |> field("chat") |> field("type")))
+              |> optional("conversation_name", message |> field("chat") |> field("title"))
+              |> optional("reply_to_id", message |> field("reply_to_message") |> field("message_id") |> identifier())
+              |> optional("reply_context", reply_context(field(message, "reply_to_message"), context.client))
+              |> Map.merge(mentions(message, context.client))
+            end
+
+          with {:ok, signal} <- build(context, definition, id <> ":" <> kind, data, subject),
+               {:ok, command} <- slash(context, message, id, room, sender, thread, edited),
+               do: {:ok, [signal | command]}
+        else
+          {:error, %Jido.Chat.Errors.Contract{}} = error -> error
+          _ -> Policy.error(:invalid_delivery)
+        end
     end
   end
 
@@ -202,6 +198,45 @@ defmodule Jido.Chat.Telegram.Normalizer do
 
   defp map_item(_context, _kind, _payload, _id), do: Policy.error(:invalid_delivery)
 
+  defp topic_service?(message) do
+    Enum.any?(
+      ~w(forum_topic_created forum_topic_edited forum_topic_closed forum_topic_reopened
+                 general_forum_topic_hidden general_forum_topic_unhidden),
+      &(not is_nil(field(message, &1)))
+    )
+  end
+
+  defp topic_event(context, message, id, room, thread) do
+    created = field(message, "forum_topic_created")
+    edited = field(message, "forum_topic_edited")
+
+    data =
+      %{
+        "room_id" => room,
+        "thread_id" =>
+          thread ||
+            if(field(message, "general_forum_topic_hidden") || field(message, "general_forum_topic_unhidden"), do: "1"),
+        "actor_id" => message |> field("from") |> field("id") |> identifier()
+      }
+      |> optional("name", field(created || edited, "name"))
+
+    {definition, data} =
+      if created do
+        {ThreadStarted, data}
+      else
+        change =
+          cond do
+            field(message, "forum_topic_closed") || field(message, "general_forum_topic_hidden") -> "closed"
+            field(message, "forum_topic_reopened") || field(message, "general_forum_topic_unhidden") -> "reopened"
+            true -> "updated"
+          end
+
+        {ThreadChanged, Map.put(data, "change", change)}
+      end
+
+    with {:ok, signal} <- build(context, definition, id <> ":topic", data), do: {:ok, [signal]}
+  end
+
   defp service_members(context, message, id, room) do
     joined = field(message, "new_chat_members") || []
     left = field(message, "left_chat_member")
@@ -219,7 +254,7 @@ defmodule Jido.Chat.Telegram.Normalizer do
         "room_id" => room,
         "participant_id" => peer,
         "actor_id" => message |> field("from") |> field("id") |> identifier(),
-        "bot_self" => peer == identifier(context.binding.options[:bot_id]),
+        "bot_self" => peer == identifier(Client.options(context.client)[:bot_id]),
         "transition" => transition,
         "evidence" => evidence,
         "previous" => nil,
@@ -262,11 +297,11 @@ defmodule Jido.Chat.Telegram.Normalizer do
 
     entries = [
       {"image", photo, "image/jpeg"},
-      {"file", field(message, "animation"), nil},
+      {"video", field(message, "animation"), "video/mp4"},
       {"audio", field(message, "audio"), nil},
-      {"audio", field(message, "voice"), nil},
+      {"audio", field(message, "voice"), "audio/ogg"},
       {"video", field(message, "video"), nil},
-      {"video", field(message, "video_note"), nil},
+      {"video", field(message, "video_note"), "video/mp4"},
       {"file", field(message, "document"), nil}
     ]
 
@@ -279,7 +314,14 @@ defmodule Jido.Chat.Telegram.Normalizer do
         true -> "image"
       end
 
-    entries = entries ++ [{sticker_kind, sticker, nil}]
+    sticker_type =
+      case sticker_kind do
+        "image" -> "image/webp"
+        "video" -> "video/webm"
+        _ -> "application/x-tgsticker"
+      end
+
+    entries = entries ++ [{sticker_kind, sticker, sticker_type}]
     entries = Enum.uniq_by(entries, fn {_kind, value, _default} -> field(value, "file_id") end)
 
     Enum.reduce_while(entries, {:ok, []}, fn
@@ -289,24 +331,36 @@ defmodule Jido.Chat.Telegram.Normalizer do
       {kind, value, default}, {:ok, acc} ->
         mime = media_type(field(value, "mime_type"), default)
         kind = media_kind(kind, mime)
-        private = private_media(kind, value, mime)
 
         with file when is_binary(file) <- identifier(field(value, "file_id")),
-             private <- Map.put(private, :url, "telegram://file/" <> file),
-             {:ok, ref} <- Resources.put(context.binding, "media", private, []) do
-          Process.put(context.tracker, [ref | Process.get(context.tracker)])
-
+             ref = %{"id" => "telegram://file/" <> file, "client_id" => context.client.id, "kind" => "media"} do
           item =
             %{"kind" => kind, "resource_ref" => ref}
             |> optional("name", field(value, "file_name"))
             |> optional("media_type", mime)
             |> optional("caption", field(message, "caption"))
+            |> optional("width", field(value, "width") || field(value, "length"))
+            |> optional("height", field(value, "height") || field(value, "length"))
+            |> optional("duration", field(value, "duration"))
+            |> sticker_metadata(value)
 
           {:cont, {:ok, acc ++ [item]}}
         else
           _ -> {:halt, Policy.error(:invalid_delivery)}
         end
     end)
+  end
+
+  defp sticker_metadata(item, value) do
+    flags =
+      Enum.reduce(["is_animated", "is_video"], %{}, fn key, acc ->
+        case field(value, key) do
+          flag when is_boolean(flag) -> Map.put(acc, key, flag)
+          _ -> acc
+        end
+      end)
+
+    if flags == %{}, do: item, else: Map.put(item, "metadata", %{"telegram" => flags})
   end
 
   defp media_kind("file", "image/" <> _), do: "image"
@@ -323,38 +377,12 @@ defmodule Jido.Chat.Telegram.Normalizer do
 
   defp media_type(_value, default), do: default
 
-  defp private_media(kind, value, mime) do
-    telegram =
-      Map.new(
-        @private_media_fields,
-        &{&1, field(value, Atom.to_string(&1))}
-      )
-      |> select_present()
-
-    %{
-      kind: private_kind(kind),
-      media_type: mime,
-      filename: field(value, "file_name"),
-      size_bytes: field(value, "file_size"),
-      width: field(value, "width") || field(value, "length"),
-      height: field(value, "height") || field(value, "length"),
-      duration: field(value, "duration"),
-      metadata: %{telegram: telegram}
-    }
-    |> select_present()
-  end
-
   defp channel_sender(message) do
     chat = field(message, "chat")
     if field(chat, "type") == "channel", do: chat
   end
 
-  defp private_kind("image"), do: :image
-  defp private_kind("audio"), do: :audio
-  defp private_kind("video"), do: :video
-  defp private_kind("file"), do: :file
-
-  defp mentions(message, binding) do
+  defp mentions(message, client) do
     entities = field(message, "entities") || field(message, "caption_entities") || []
     text = field(message, "text") || field(message, "caption") || ""
 
@@ -392,7 +420,7 @@ defmodule Jido.Chat.Telegram.Normalizer do
         end
       end)
 
-    bot = binding.options[:bot_username]
+    bot = Client.options(client)[:bot_username]
 
     %{
       "mention_details" => details,
@@ -400,7 +428,8 @@ defmodule Jido.Chat.Telegram.Normalizer do
       "mentioned" =>
         Enum.any?(
           details,
-          &(&1["id"] == identifier(binding.options[:bot_id]) or (is_binary(bot) and &1["username"] in [bot, "@" <> bot]))
+          &(&1["id"] == identifier(Client.options(client)[:bot_id]) or
+              (is_binary(bot) and &1["username"] in [bot, "@" <> bot]))
         )
     }
   end
@@ -417,18 +446,18 @@ defmodule Jido.Chat.Telegram.Normalizer do
 
   defp reply_context(nil, _binding), do: nil
 
-  defp reply_context(message, binding) do
+  defp reply_context(message, client) do
     %{
       "message_id" => identifier(field(message, "message_id")),
       "text" => field(message, "text") || field(message, "caption"),
-      "sender" => sender(field(message, "from") || field(message, "sender_chat"), binding)
+      "sender" => sender(field(message, "from") || field(message, "sender_chat"), client)
     }
     |> select_present()
   end
 
   defp sender(nil, _binding), do: nil
 
-  defp sender(user, binding) do
+  defp sender(user, client) do
     id = identifier(field(user, "id"))
     name = [field(user, "first_name"), field(user, "last_name")] |> Enum.filter(&is_binary/1) |> Enum.join(" ")
 
@@ -437,7 +466,7 @@ defmodule Jido.Chat.Telegram.Normalizer do
       "username" => field(user, "username"),
       "display_name" => if(name != "", do: name, else: field(user, "title")),
       "is_bot" => field(user, "is_bot") == true,
-      "is_self" => id == identifier(binding.options[:bot_id])
+      "is_self" => id == identifier(Client.options(client)[:bot_id])
     }
     |> select_present()
   end
@@ -468,8 +497,8 @@ defmodule Jido.Chat.Telegram.Normalizer do
 
   defp build(context, definition, item, data, subject \\ nil) do
     data = data |> Map.put("delivery_id", context.delivery) |> Map.put("item_id", item)
-    subject = subject || if data["room_id"], do: Identity.conversation_subject(context.binding.id, data["room_id"])
-    definition.new(data, source: context.binding.source, subject: subject)
+    subject = subject || if data["room_id"], do: Identity.conversation_subject(context.client.id, data["room_id"])
+    definition.new(data, source: context.client.source, subject: subject)
   end
 
   defp failed(context, id, kind, index, room, code) do

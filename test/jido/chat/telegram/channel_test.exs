@@ -1,1366 +1,393 @@
 defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
-  use Jido.Chat.AdapterTestKit,
-    adapter: Jido.Chat.Telegram.Adapter,
-    async: true
+  use ExUnit.Case, async: true
+  @moduletag capture_log: true
+  alias Jido.Chat.Client
+  alias Jido.Chat.Telegram, as: Telegram
+  alias Telegram.Adapter
 
-  alias Jido.Chat
-  alias Jido.Chat.{FileUpload, Handlers, Resources}
-  alias Jido.Chat.Telegram.Adapter
+  defmodule Transport do
+    def call(token, method, payload, opts) do
+      send(opts[:observer], {:wire, method, payload, token})
 
-  defp captured_binding(extra \\ []) do
-    {:ok, binding} =
-      Chat.bind(
-        Adapter,
-        [
-          id: "surface",
-          token: "bot-token",
-          transport: Jido.Chat.Telegram.AdapterSurfaceTest.MockTransport,
-          bot_username: "jido"
-        ] ++ extra
+      case Keyword.get(opts, :response, :default) do
+        :default -> response(method, payload)
+        fun when is_function(fun, 2) -> fun.(method, payload)
+        value -> value
+      end
+    end
+
+    defp response(method, payload) when method in ["sendMessage", "sendRichMessage", "editMessageText"] do
+      {:ok,
+       %{
+         "message_id" => 42,
+         "chat" => %{"id" => payload["chat_id"]},
+         "text" => payload["text"] || "rich",
+         "message_thread_id" => payload["message_thread_id"],
+         "reply_to_message" => %{"message_id" => get_in(payload, ["reply_parameters", "message_id"])}
+       }}
+    end
+
+    defp response(method, payload) when method in ["sendPhoto", "sendDocument"] do
+      field = if method == "sendPhoto", do: "photo", else: "document"
+      media = %{"file_id" => "file-1"}
+
+      {:ok,
+       %{
+         "message_id" => 42,
+         "chat" => %{"id" => payload["chat_id"]},
+         field => if(field == "photo", do: [media], else: media)
+       }}
+    end
+
+    defp response("getChat", payload),
+      do: {:ok, %ExGram.Model.ChatFullInfo{id: payload["chat_id"], type: "private", first_name: "Alice"}}
+
+    defp response("createForumTopic", _), do: {:ok, %{"message_thread_id" => 7, "name" => "Topic"}}
+
+    defp response("getFile", payload),
+      do: {:ok, %{"file_id" => payload["file_id"], "file_path" => "documents/test.json", "file_size" => 2}}
+
+    defp response("downloadFile", _), do: {:ok, "{}"}
+
+    defp response("getWebhookInfo", _),
+      do: {:ok, %{"url" => "", "pending_update_count" => 0, "has_custom_certificate" => false}}
+
+    defp response(_, _), do: {:ok, true}
+  end
+
+  defp client,
+    do:
+      Client.new!(Adapter,
+        id: "telegram",
+        credentials: %{token: "private-token", secret_token: "private-secret"},
+        transport: Transport
       )
 
-    binding
+  defp reference(kind \\ "media", id \\ "telegram://file/file-1"),
+    do: %{"client_id" => "telegram", "kind" => kind, "id" => id}
+
+  defp request(action, data),
+    do: action.signal_definition().new!(Map.merge(%{"client_id" => "telegram", "request_id" => "request"}, data))
+
+  defp run(action, data, opts \\ []) do
+    Jido.Exec.run(action, %{signal: request(action, data)}, %{client: client(), options: [observer: self()] ++ opts},
+      max_attempts: 1
+    )
   end
 
-  defp normalize_update(update) do
-    binding = captured_binding()
-    # Old media fixtures omitted the now-required provider sender. Supply a fixed fixture sender.
-    update = fixture_sender(update)
-    {:ok, delivery} = Chat.normalize_event(binding, update)
-    [fact] = delivery.signals
-    {binding, fact}
-  end
+  test "adapter exposes only native operation and normalization callbacks" do
+    assert Adapter.channel_type() == :telegram
+    assert Adapter.default_transport() == Telegram.Transport.ExGramClient
+    assert Adapter.capabilities()[:send_file] == :native
+    assert Adapter.capabilities()[:post_ephemeral] == :unsupported
 
-  defp fixture_sender(update) do
-    Enum.reduce(["message", "edited_message", "channel_post", "edited_channel_post"], update, fn key, acc ->
-      atom = String.to_existing_atom(key)
-      actual = if Map.has_key?(acc, key), do: key, else: atom
-
-      case Map.get(acc, actual) do
-        message when is_map(message) ->
-          if Map.get(message, "from") || Map.get(message, :from),
-            do: acc,
-            else:
-              Map.put(
-                acc,
-                actual,
-                Map.put(message, if(is_struct(message) or actual == atom, do: :from, else: "from"), %{
-                  id: 111,
-                  first_name: "Jane"
-                })
-              )
-
-        _ ->
-          acc
-      end
-    end)
-  end
-
-  defp media_records(binding, fact) do
-    Enum.map(fact.data["media"], fn media ->
-      {:ok, private} = Resources.resolve(binding, media["resource_ref"])
-      private
-    end)
-  end
-
-  defp accept_webhook(binding, handlers, payload, headers \\ %{}) do
-    request =
-      Jido.Chat.WebhookRequest.new(%{adapter_name: :telegram, payload: plain_payload(payload), headers: headers})
-
-    with :ok <- Adapter.verify_webhook(request, binding.options),
-         {:ok, delivery} <- Chat.normalize_event(binding, fixture_sender(payload)),
-         {:ok, handlers, _} <- Handlers.accept(handlers, binding, delivery),
-         do: {:ok, handlers, delivery.signals}
-  end
-
-  defp plain_payload(%_{} = value), do: plain_payload(Map.from_struct(value))
-  defp plain_payload(value) when is_map(value), do: Map.new(value, fn {key, item} -> {key, plain_payload(item)} end)
-  defp plain_payload(value) when is_list(value), do: Enum.map(value, &plain_payload/1)
-  defp plain_payload(value), do: value
-
-  setup_all do
-    Code.ensure_loaded!(Adapter)
-    :ok
-  end
-
-  defmodule MockTransport do
-    @behaviour Jido.Chat.Telegram.Transport
-
-    @impl true
-    def call(token, method, payload, _opts) do
-      send(self(), {:transport_call, token, method, payload})
-
-      case method do
-        "sendMessage" ->
-          {:ok, %{"message_id" => 42, "chat" => %{"id" => payload["chat_id"]}, "date" => 1_706_745_600}}
-
-        "sendMessageDraft" ->
-          {:ok, true}
-
-        "editMessageText" ->
-          {:ok, true}
-
-        "deleteMessage" ->
-          {:ok, true}
-
-        "sendChatAction" ->
-          {:ok, true}
-
-        "getChat" ->
-          {:ok,
-           %{
-             "id" => payload["chat_id"],
-             "type" => "private",
-             "first_name" => "Alice",
-             "username" => "alice"
-           }}
-
-        "setMessageReaction" ->
-          {:ok, true}
-
-        "sendPhoto" ->
-          {:ok,
-           %{
-             "message_id" => 77,
-             "chat" => %{"id" => payload["chat_id"]},
-             "date" => 1_706_745_601,
-             "photo" => [%{"file_id" => "photo-file-id"}],
-             "caption" => payload["caption"]
-           }}
-
-        "sendDocument" ->
-          {:ok,
-           %{
-             "message_id" => 78,
-             "chat" => %{"id" => payload["chat_id"]},
-             "date" => 1_706_745_602,
-             "document" => %{"file_id" => "document-file-id"},
-             "caption" => payload["caption"]
-           }}
-
-        "createForumTopic" ->
-          {:ok,
-           %{
-             "message_thread_id" => 321,
-             "name" => payload["name"]
-           }}
-      end
+    for {name, arity} <- [
+          send_message: 3,
+          send_file: 3,
+          stream: 3,
+          download_file: 2,
+          ensure_ingress_subscription: 2,
+          list_ingress_subscriptions: 2,
+          delete_ingress_subscription: 3
+        ] do
+      refute function_exported?(Adapter, name, arity)
     end
   end
 
-  defmodule MockChatFullInfo do
-    @schema Zoi.struct(
-              __MODULE__,
-              %{
-                id: Zoi.any() |> Zoi.nullish(),
-                type: Zoi.any() |> Zoi.nullish(),
-                first_name: Zoi.any() |> Zoi.nullish(),
-                username: Zoi.any() |> Zoi.nullish(),
-                permissions: Zoi.any() |> Zoi.nullish()
-              },
-              coerce: true
-            )
-
-    @enforce_keys Zoi.Struct.enforce_keys(@schema)
-    defstruct Zoi.Struct.struct_fields(@schema)
-  end
-
-  defmodule StructMetadataTransport do
-    @behaviour Jido.Chat.Telegram.Transport
-
-    @impl true
-    def call(token, method, payload, _opts) do
-      send(self(), {:transport_call, token, method, payload})
-
-      case method do
-        "getChat" ->
-          {:ok,
-           %MockChatFullInfo{
-             id: payload["chat_id"],
-             type: "private",
-             first_name: "Alice",
-             username: "alice",
-             permissions: %{can_send_messages: true}
-           }}
-
-        _ ->
-          {:error, {:unsupported_method, method}}
-      end
-    end
-  end
-
-  defmodule ReactionUnsupportedTransport do
-    @behaviour Jido.Chat.Telegram.Transport
-
-    @impl true
-    def call(_token, "setMessageReaction", _payload, _opts), do: {:error, :unsupported_method}
-    def call(_token, method, _payload, _opts), do: {:error, {:unsupported_method, method}}
-  end
-
-  test "channel metadata" do
-    caps = Adapter.capabilities()
-
-    assert Adapter.channel_type() == :telegram
-    assert caps.send_message == :native
-    assert caps.edit_message == :native
-    assert caps.delete_message == :native
-  end
-
-  test "adapter capabilities matrix declares supported and unsupported surfaces" do
-    caps = Jido.Chat.Telegram.Adapter.capabilities()
-
-    assert caps.send_message == :native
-    assert caps.send_file == :native
-    assert caps.fetch_media == :native
-    assert caps.edit_message == :native
-    assert caps.fetch_messages == :unsupported
-    assert caps.list_threads == :unsupported
-    assert caps.open_modal == :unsupported
-    assert caps.post_ephemeral == :fallback
-
-    assert :ok = Jido.Chat.Adapter.validate_capabilities(Jido.Chat.Telegram.Adapter)
-  end
-
-  test "delivery capabilities include canonical single-file media support but not multi-file" do
-    assert Adapter.capabilities().send_file == :native
-    assert Jido.Chat.AdapterTestKit.supported?(Adapter, :send_file)
-    assert :ok = Jido.Chat.Adapter.validate_capabilities(Adapter)
-  end
-
-  test "adapter extension capabilities expose telegram-only surface" do
-    caps = Jido.Chat.Telegram.Adapter.extension_capabilities()
-    assert caps.send_photo == :native
-    assert caps.send_document == :native
-    assert caps.send_media_group == :unsupported
-  end
-
-  test "transform_incoming/1 normalizes a telegram message map" do
-    update = %{
-      "message" => %{
-        "message_id" => 456,
-        "date" => 1_706_745_600,
-        "chat" => %{"id" => 789, "type" => "group", "title" => "Test Group"},
-        "from" => %{"id" => 111, "first_name" => "Jane", "username" => "jane_doe"},
-        "message_thread_id" => 999,
-        "text" => "Hello group!"
-      }
-    }
-
-    {_binding, incoming} = normalize_update(update)
-    assert incoming.data["room_id"] == "789"
-    assert incoming.data["sender"]["id"] == "111"
-    assert incoming.data["text"] == "Hello group!"
-    assert incoming.data["sender"]["username"] == "jane_doe"
-    assert incoming.data["sender"]["display_name"] == "Jane"
-    assert incoming.data["conversation_kind"] == "group"
-    assert incoming.data["conversation_name"] == "Test Group"
-    assert incoming.data["thread_id"] == "999"
-    assert Adapter.channel_type() == :telegram
-    assert incoming.data["room_id"] == "789"
-    assert incoming.data["thread_id"] == "999"
-    assert incoming.data["conversation_kind"] == "direct" == false
-  end
-
-  test "transform_incoming/1 extracts media" do
-    update = %{
-      "message" => %{
-        "message_id" => 456,
-        "date" => 1_706_745_600,
-        "chat" => %{"id" => 789, "type" => "group"},
-        "photo" => [
-          %{"file_id" => "photo-small", "width" => 64, "height" => 64, "file_size" => 128},
-          %{"file_id" => "photo-large", "width" => 512, "height" => 512, "file_size" => 4096}
+  test "send, edit, and stream carry format, replies, and thread routing in Signals" do
+    for {action, method, text_field} <- [
+          {Jido.Chat.SendMessage, "sendMessage", "text"},
+          {Jido.Chat.EditMessage, "editMessageText", "text"}
         ],
-        "text" => nil
-      }
-    }
+        format <- ["plain", "markdown", "html"] do
+      data = %{"room_id" => "123", "thread_id" => "7", "reply_to_id" => "9", "format" => format}
 
-    {binding, incoming} = normalize_update(update)
+      data = Map.put(data, "text", "Hello world")
 
-    assert [%{kind: :image, url: "telegram://file/photo-large", media_type: "image/jpeg"}] =
-             media_records(binding, incoming)
-  end
+      data = if action == Jido.Chat.EditMessage, do: Map.put(data, "message_id", "42"), else: data
+      # EditMessage has no reply target: it changes the original message.
+      data = if action == Jido.Chat.EditMessage, do: Map.drop(data, ["reply_to_id", "thread_id"]), else: data
+      assert {:ok, %{signal: completed}} = run(action, data)
+      expected_method = if action != Jido.Chat.EditMessage and format != "plain", do: "sendRichMessage", else: method
+      assert_receive {:wire, ^expected_method, payload, "private-token"}
+      if action != Jido.Chat.EditMessage, do: assert(payload["message_thread_id"] == "7")
+      if action != Jido.Chat.EditMessage, do: assert(payload["reply_parameters"] == %{"message_id" => "9"})
 
-  test "transform_incoming/1 prefers an available photo MIME type to the fallback" do
-    update = %{
-      "message" => %{
-        "message_id" => 456,
-        "date" => 1_706_745_600,
-        "chat" => %{"id" => 789, "type" => "group"},
-        "photo" => [
-          %{
-            "file_id" => "photo-large",
-            "mime_type" => " image/png ",
-            "width" => 512,
-            "height" => 512
-          }
-        ]
-      }
-    }
+      if format == "plain",
+        do: assert(payload[text_field] == "Hello world"),
+        else: assert(payload["rich_message"] == %{format => "Hello world"})
 
-    {binding, incoming} = normalize_update(update)
-
-    assert [%{kind: :image, url: "telegram://file/photo-large", media_type: "image/png"}] =
-             media_records(binding, incoming)
-  end
-
-  test "transform_incoming/1 uses the photo MIME fallback for blank or invalid values" do
-    for mime_type <- [nil, "", " \t\n", 123] do
-      update = %{
-        "message" => %{
-          "message_id" => 456,
-          "date" => 1_706_745_600,
-          "chat" => %{"id" => 789, "type" => "group"},
-          "photo" => [
-            %{
-              "file_id" => "photo-large",
-              "mime_type" => mime_type,
-              "width" => 512,
-              "height" => 512
-            }
-          ]
-        }
-      }
-
-      {binding, incoming} = normalize_update(update)
-      assert [%{media_type: "image/jpeg"}] = media_records(binding, incoming)
+      assert completed.data["result"]["id"] == "42"
     end
   end
 
-  test "transform_incoming/1 normalizes ExGram PhotoSize structs as JPEG" do
-    update = %{
-      message: %ExGram.Model.Message{
-        message_id: 456,
-        date: 1_706_745_600,
-        chat: %ExGram.Model.Chat{id: 789, type: "group"},
-        photo: [
-          %ExGram.Model.PhotoSize{
-            file_id: "photo-large",
-            file_unique_id: "photo-unique",
-            width: 512,
-            height: 512,
-            file_size: 4_096
-          }
-        ]
-      }
+  test "keyboards enter through validated request data and an empty keyboard clears buttons" do
+    keyboard = %{
+      "rows" => [[%{"text" => "Confirm", "value" => "confirm:1"}, %{"text" => "Help", "url" => "https://example.com"}]]
     }
 
-    {binding, incoming} = normalize_update(update)
+    assert {:ok, _} = run(Jido.Chat.SendMessage, %{"room_id" => "123", "text" => "Choose", "keyboard" => keyboard})
+    assert_receive {:wire, "sendMessage", payload, _}
 
-    assert [
-             %{
-               kind: :image,
-               url: "telegram://file/photo-large",
-               media_type: "image/jpeg",
-               size_bytes: 4_096,
-               width: 512,
-               height: 512,
-               metadata: %{telegram: %{file_unique_id: "photo-unique"}}
-             }
-           ] = media_records(binding, incoming)
+    assert payload["reply_markup"] == %{
+             "inline_keyboard" => [
+               [
+                 %{"text" => "Confirm", "callback_data" => "confirm:1"},
+                 %{"text" => "Help", "url" => "https://example.com"}
+               ]
+             ]
+           }
+
+    assert {:ok, _} =
+             run(Jido.Chat.EditMessage, %{
+               "room_id" => "123",
+               "message_id" => "42",
+               "text" => "Done",
+               "keyboard" => %{"rows" => []}
+             })
+
+    assert_receive {:wire, "editMessageText", %{"reply_markup" => %{"inline_keyboard" => []}}, _}
   end
 
-  test "transform_incoming/1 extracts a static sticker with Telegram metadata" do
-    update = %{
-      "message" => %{
-        "message_id" => 457,
-        "date" => 1_706_745_600,
-        "chat" => %{"id" => 789, "type" => "private"},
-        "sticker" => %{
-          "file_id" => "sticker-webp",
-          "file_unique_id" => "unique-sticker",
-          "type" => "regular",
-          "width" => 512,
-          "height" => 512,
-          "is_animated" => false,
-          "is_video" => false,
-          "emoji" => "🦊",
-          "set_name" => "foxes",
-          "custom_emoji_id" => "custom-1",
-          "file_size" => 1_024
-        }
-      }
+  test "a forged invalid keyboard is rejected before transport I/O" do
+    original = request(Jido.Chat.SendMessage, %{"room_id" => "123", "text" => "Choose"})
+
+    invalid = %{
+      original
+      | data:
+          Map.put(original.data, "keyboard", %{
+            "rows" => [[%{"text" => "Confirm", "value" => String.duplicate("é", 33)}]]
+          })
     }
 
-    {binding, incoming} = normalize_update(update)
+    assert {:error, _} =
+             Jido.Exec.run(Jido.Chat.SendMessage, %{signal: invalid}, %{client: client(), options: [observer: self()]})
 
-    assert [
-             %{
-               kind: :image,
-               url: "telegram://file/sticker-webp",
-               size_bytes: 1_024,
-               width: 512,
-               height: 512,
-               metadata: %{
-                 telegram: %{
-                   file_unique_id: "unique-sticker",
-                   type: "regular",
-                   is_animated: false,
-                   is_video: false,
-                   emoji: "🦊",
-                   set_name: "foxes",
-                   custom_emoji_id: "custom-1"
-                 }
-               }
-             }
-           ] = media_records(binding, incoming)
+    refute_receive {:wire, _, _, _}
   end
 
-  test "transform_incoming/1 classifies animated and video sticker formats" do
-    cases = [
-      {%{"is_animated" => true, "is_video" => false}, :file},
-      {%{is_animated: false, is_video: true}, :video}
-    ]
+  test "old content options cannot bypass the Signal schema" do
+    for opts <- [[reply_markup: %{}], [parse_mode: "HTML"], [rich_format: :html], [thread_id: "7"]] do
+      assert {:error, %Jido.Chat.Error{signal: failed}} =
+               run(Jido.Chat.SendMessage, %{"room_id" => "123", "text" => "Hello"}, opts)
 
-    for {format, expected_kind} <- cases do
-      update = %{
-        message: %{
-          message_id: 457,
-          chat: %{id: 789, type: "private"},
-          sticker:
-            Map.merge(
-              %{
-                file_id: "sticker-#{expected_kind}",
-                width: 512,
-                height: 512
-              },
-              format
-            )
-        }
-      }
+      assert failed.data["outcome"] == "not_attempted"
+    end
 
-      {binding, incoming} = normalize_update(update)
-      assert [%{kind: ^expected_kind}] = media_records(binding, incoming)
+    refute_receive {:wire, _, _, _}
+  end
+
+  test "metadata and direct addressing verify rooms with provider reads" do
+    assert {:ok, %{signal: completed}} = run(Jido.Chat.FetchMetadata, %{"room_id" => "123"})
+    assert completed.data["result"] == %{"id" => "123", "name" => "Alice", "kind" => "direct"}
+    assert_receive {:wire, "getChat", _, _}
+    assert {:ok, %{signal: direct}} = run(Jido.Chat.OpenDm, %{"user_id" => "123"})
+    assert direct.data["result"] == %{"id" => "123", "kind" => "direct"}
+    assert_receive {:wire, "getChat", %{"chat_id" => "123"}, _}
+    refute_receive {:wire, _, _, _}
+  end
+
+  test "delete, typing, reactions, and topics use native core Actions" do
+    for {action, data, method} <- [
+          {Jido.Chat.DeleteMessage, %{"message_id" => "42"}, "deleteMessage"},
+          {Jido.Chat.StartTyping, %{"thread_id" => "7"}, "sendChatAction"},
+          {Jido.Chat.AddReaction, %{"message_id" => "42", "reaction" => "👍"}, "setMessageReaction"},
+          {Jido.Chat.RemoveReaction, %{"message_id" => "42", "reaction" => "👍"}, "setMessageReaction"},
+          {Jido.Chat.CreateThread, %{"name" => "Topic"}, "createForumTopic"}
+        ] do
+      assert {:ok, _} = run(action, Map.put(data, "room_id", "123"))
+      assert_receive {:wire, ^method, _, _}
     end
   end
 
-  test "transform_incoming/1 accepts ExGram update and message structs" do
-    message = %ExGram.Model.Message{
-      message_id: 458,
-      date: 1_706_745_600,
-      chat: %ExGram.Model.Chat{id: 789, type: "private"},
-      from: %ExGram.Model.User{id: 111, is_bot: false, first_name: "Jane"},
-      sticker: %ExGram.Model.Sticker{
-        file_id: "struct-sticker",
-        file_unique_id: "struct-sticker-unique",
-        type: "regular",
-        width: 512,
-        height: 512,
-        is_animated: false,
-        is_video: false
-      }
-    }
-
-    update = %ExGram.Model.Update{update_id: 10, message: message}
-
-    {binding, incoming} = normalize_update(update)
-    assert [%{kind: :image, url: "telegram://file/struct-sticker"}] = media_records(binding, incoming)
-    refute Map.has_key?(incoming.data, "raw")
-    assert {:ok, wire} = Jido.Signal.Serialization.serialize(incoming)
-    refute wire =~ "struct-sticker-unique"
-
-    {:ok, handlers} = Handlers.new()
-    assert {:ok, _handlers, [webhook_incoming]} = accept_webhook(binding, handlers, update)
-    assert [%{kind: :image}] = media_records(binding, webhook_incoming)
-  end
-
-  test "transform_incoming/1 extracts an animation once when Telegram also sends its document" do
-    animation = %{
-      "file_id" => "animation-file",
-      "file_unique_id" => "unique-animation",
-      "width" => 640,
-      "height" => 360,
-      "duration" => 4,
-      "file_name" => "demo.mp4",
-      "mime_type" => "video/mp4",
-      "file_size" => 4_096
-    }
-
-    update = %{
-      "message" => %{
-        "message_id" => 458,
-        "date" => 1_706_745_600,
-        "chat" => %{"id" => 789, "type" => "private"},
-        "animation" => animation,
-        "document" => animation
-      }
-    }
-
-    {binding, incoming} = normalize_update(update)
-
-    assert [
-             %{
-               kind: :video,
-               url: "telegram://file/animation-file",
-               media_type: "video/mp4",
-               filename: "demo.mp4",
-               size_bytes: 4_096,
-               width: 640,
-               height: 360,
-               duration: 4,
-               metadata: %{telegram: %{file_unique_id: "unique-animation"}}
-             }
-           ] = media_records(binding, incoming)
-  end
-
-  test "transform_incoming/1 extracts a video note and ignores an unsupported attachment" do
-    update = %{
-      message: %{
-        message_id: 459,
-        date: 1_706_745_600,
-        chat: %{id: 789, type: "private"},
-        video_note: %{
-          file_id: "video-note-file",
-          file_unique_id: "unique-video-note",
-          length: 240,
-          duration: 7,
-          file_size: 8_192
-        },
-        future_attachment: %{file_id: "unsupported-file"}
-      }
-    }
-
-    {binding, incoming} = normalize_update(update)
-
-    assert [
-             %{
-               kind: :video,
-               url: "telegram://file/video-note-file",
-               size_bytes: 8_192,
-               width: 240,
-               height: 240,
-               duration: 7,
-               metadata: %{telegram: %{file_unique_id: "unique-video-note"}}
-             }
-           ] = media_records(binding, incoming)
-  end
-
-  test "transform_incoming/1 reads a photo caption as the message text" do
-    update = %{
-      "message" => %{
-        "message_id" => 457,
-        "date" => 1_706_745_600,
-        "chat" => %{"id" => 789, "type" => "private"},
-        "photo" => [%{"file_id" => "photo-large"}],
-        "caption" => "what is wrong with this chart?"
-      }
-    }
-
-    {binding, incoming} = normalize_update(update)
-    assert incoming.data["text"] == "what is wrong with this chart?"
-    assert [%{kind: :image}] = media_records(binding, incoming)
-  end
-
-  test "transform_incoming/1 leaves text nil for a caption-less photo" do
-    update = %{
-      "message" => %{
-        "message_id" => 458,
-        "date" => 1_706_745_600,
-        "chat" => %{"id" => 789, "type" => "private"},
-        "photo" => [%{"file_id" => "photo-large"}]
-      }
-    }
-
-    {_binding, incoming} = normalize_update(update)
-    assert incoming.data["text"] == ""
-  end
-
-  test "transform_incoming/1 prefers text over caption when a message somehow has both" do
-    update = %{
-      "message" => %{
-        "message_id" => 459,
-        "date" => 1_706_745_600,
-        "chat" => %{"id" => 789, "type" => "private"},
-        "text" => "the text",
-        "caption" => "the caption"
-      }
-    }
-
-    {_binding, incoming} = normalize_update(update)
-    assert incoming.data["text"] == "the text"
-  end
-
-  test "transform_incoming/1 reads a document caption too" do
-    update = %{
-      "message" => %{
-        "message_id" => 460,
-        "date" => 1_706_745_600,
-        "chat" => %{"id" => 789, "type" => "private"},
-        "document" => %{"file_id" => "doc-1", "mime_type" => "application/pdf"},
-        "caption" => "please summarise this"
-      }
-    }
-
-    {binding, incoming} = normalize_update(update)
-    assert incoming.data["text"] == "please summarise this"
-    assert [%{kind: :file}] = media_records(binding, incoming)
-  end
-
-  test "normalize_event returns typed failures for missing or malformed updates" do
-    binding = captured_binding()
-    assert {:ok, %{signals: [unsupported]}} = Chat.normalize_event(binding, %{"message" => nil})
-    assert unsupported.type == "jido.chat.normalization.failed"
-    assert {:ok, %{signals: [invalid]}} = Chat.normalize_event(binding, %{"edited_message" => %{}})
-    assert invalid.data["code"] == "invalid_item"
-  end
-
-  test "send_message/3 uses configured transport and returns normalized send result" do
-    assert {:ok, result} =
-             Adapter.send_message(123, "hello",
-               token: "bot-token",
-               transport: MockTransport,
-               parse_mode: "HTML"
-             )
-
-    assert_received {:transport_call, "bot-token", "sendMessage", payload}
-    assert payload["chat_id"] == 123
-    assert payload["text"] == "hello"
-    assert payload["parse_mode"] == "HTML"
-
-    assert result["id"] == "42"
-    assert result["id"] == "42"
-    assert result["room_id"] == "123"
-    assert result["timestamp"] == "2024-02-01T00:00:00Z"
-  end
-
-  # `format: :markdown` resolves to a rich message rather than a parse_mode — that
-  # routing is covered in `RichMessageTest`.
-  test "send_message/3 infers parse_mode from top-level format" do
-    assert {:ok, _result} =
-             Adapter.send_message(123, "hello",
-               token: "bot-token",
-               transport: MockTransport,
-               format: :html
-             )
-
-    assert_received {:transport_call, "bot-token", "sendMessage", payload}
-    assert payload["parse_mode"] == "HTML"
-  end
-
-  test "send_message/3 keeps explicit parse_mode over top-level format" do
-    assert {:ok, _result} =
-             Adapter.send_message(123, "hello",
-               token: "bot-token",
-               transport: MockTransport,
-               parse_mode: "Markdown",
-               format: :html
-             )
-
-    assert_received {:transport_call, "bot-token", "sendMessage", payload}
-    assert payload["parse_mode"] == "Markdown"
-  end
-
-  test "send_message/3 omits parse_mode for plain_text and unknown top-level format" do
-    assert {:ok, _result} =
-             Adapter.send_message(123, "hello",
-               token: "bot-token",
-               transport: MockTransport,
-               format: :plain_text
-             )
-
-    assert_received {:transport_call, "bot-token", "sendMessage", plain_text_payload}
-    refute Map.has_key?(plain_text_payload, "parse_mode")
-
-    assert {:ok, _result} =
-             Adapter.send_message(123, "hello",
-               token: "bot-token",
-               transport: MockTransport,
-               format: :unknown
-             )
-
-    assert_received {:transport_call, "bot-token", "sendMessage", unknown_payload}
-    refute Map.has_key?(unknown_payload, "parse_mode")
-  end
-
-  test "adapter stream uses telegram draft updates for private chats and final sendMessage" do
-    assert {:ok, result} =
-             Adapter.stream(
-               123,
-               ["hel", "lo"],
-               token: "bot-token",
-               transport: MockTransport,
-               stream_update_interval_ms: 0,
-               draft_id: 7
-             )
-
-    assert_received {:transport_call, "bot-token", "sendMessageDraft", first_payload}
-    assert first_payload["chat_id"] == 123
-    assert first_payload["draft_id"] == 7
-    assert first_payload["text"] == "hel"
-
-    assert_received {:transport_call, "bot-token", "sendMessageDraft", second_payload}
-    assert second_payload["chat_id"] == 123
-    assert second_payload["draft_id"] == 7
-    assert second_payload["text"] == "hello"
-
-    assert_received {:transport_call, "bot-token", "sendMessage", final_payload}
-    assert final_payload["chat_id"] == 123
-    assert final_payload["text"] == "hello"
-
-    assert result["id"] == "42"
-    assert result["id"] == "42"
-    assert result["room_id"] == "123"
-  end
-
-  test "adapter stream infers parse_mode from top-level format for draft and final send" do
-    assert {:ok, _result} =
-             Adapter.stream(
-               123,
-               ["hel", "lo"],
-               token: "bot-token",
-               transport: MockTransport,
-               stream_update_interval_ms: 0,
-               draft_id: 7,
-               format: :html
-             )
-
-    assert_received {:transport_call, "bot-token", "sendMessageDraft", first_payload}
-    assert first_payload["parse_mode"] == "HTML"
-
-    assert_received {:transport_call, "bot-token", "sendMessageDraft", second_payload}
-    assert second_payload["parse_mode"] == "HTML"
-
-    assert_received {:transport_call, "bot-token", "sendMessage", final_payload}
-    assert final_payload["parse_mode"] == "HTML"
-  end
-
-  test "adapter stream skips duplicate partial draft updates" do
-    assert {:ok, _result} =
-             Adapter.stream(
-               123,
-               ["hi", "", "", "!"],
-               token: "bot-token",
-               transport: MockTransport,
-               stream_update_interval_ms: 0,
-               draft_id: 9
-             )
-
-    assert_received {:transport_call, "bot-token", "sendMessageDraft", %{"text" => "hi"}}
-    assert_received {:transport_call, "bot-token", "sendMessageDraft", %{"text" => "hi!"}}
-    assert_received {:transport_call, "bot-token", "sendMessage", %{"text" => "hi!"}}
-
-    refute_received {:transport_call, "bot-token", "sendMessageDraft", %{"text" => ""}}
-  end
-
-  test "adapter stream falls back to one-shot send for unsupported targets" do
-    assert {:ok, result} =
-             Adapter.stream(
-               "@channelname",
-               ["hello", " world"],
-               token: "bot-token",
-               transport: MockTransport,
-               draft_id: 7
-             )
-
-    assert_received {:transport_call, "bot-token", "sendMessage", payload}
-    assert payload["chat_id"] == "@channelname"
-    assert payload["text"] == "hello world"
-
-    refute_received {:transport_call, "bot-token", "sendMessageDraft", _payload}
-
-    assert result["id"] == "42"
-  end
-
-  test "adapter stream returns empty_stream when no content is produced" do
-    assert {:error, :empty_stream} =
-             Adapter.stream(
-               123,
-               ["", ""],
-               token: "bot-token",
-               transport: MockTransport
-             )
-
-    refute_received {:transport_call, "bot-token", "sendMessageDraft", _payload}
-    refute_received {:transport_call, "bot-token", "sendMessage", _payload}
-  end
-
-  test "send_message/3 maps generic reply and thread routing to telegram payload fields" do
-    assert {:ok, _result} =
-             Adapter.send_message(123, "hello",
-               token: "bot-token",
-               transport: MockTransport,
-               reply_to_id: 456,
-               external_thread_id: "999"
-             )
-
-    assert_received {:transport_call, "bot-token", "sendMessage", payload}
-    assert payload["reply_to_message_id"] == 456
-    assert payload["message_thread_id"] == "999"
-  end
-
-  test "edit_message/4 handles boolean telegram response" do
-    assert {:ok, result} =
-             Adapter.edit_message(123, 42, "updated",
-               token: "bot-token",
-               transport: MockTransport
-             )
-
-    assert_received {:transport_call, "bot-token", "editMessageText", payload}
-    assert payload["chat_id"] == 123
-    assert payload["message_id"] == 42
-    assert payload["text"] == "updated"
-
-    assert result["id"] == "42"
-    assert result["id"] == "42"
-    assert result["room_id"] == "123"
-    refute Map.has_key?(result, "timestamp")
-  end
-
-  test "edit_message/4 infers parse_mode from top-level format" do
-    assert {:ok, _result} =
-             Adapter.edit_message(123, 42, "updated",
-               token: "bot-token",
-               transport: MockTransport,
-               format: :html
-             )
-
-    assert_received {:transport_call, "bot-token", "editMessageText", payload}
-    assert payload["parse_mode"] == "HTML"
-  end
-
-  test "edit_message/4 omits parse_mode for plain_text and unknown top-level format" do
-    assert {:ok, _result} =
-             Adapter.edit_message(123, 42, "updated",
-               token: "bot-token",
-               transport: MockTransport,
-               format: :plain_text
-             )
-
-    assert_received {:transport_call, "bot-token", "editMessageText", plain_text_payload}
-    refute Map.has_key?(plain_text_payload, "parse_mode")
-
-    assert {:ok, _result} =
-             Adapter.edit_message(123, 42, "updated",
-               token: "bot-token",
-               transport: MockTransport,
-               format: :unknown
-             )
-
-    assert_received {:transport_call, "bot-token", "editMessageText", unknown_payload}
-    refute Map.has_key?(unknown_payload, "parse_mode")
-  end
-
-  test "delete_message/3 delegates to transport" do
-    assert :ok = Adapter.delete_message(123, 42, token: "bot-token", transport: MockTransport)
-
-    assert_received {:transport_call, "bot-token", "deleteMessage", payload}
-    assert payload["chat_id"] == 123
-    assert payload["message_id"] == 42
-  end
-
-  test "start_typing/2 delegates to transport" do
-    assert :ok =
-             Adapter.start_typing(123,
-               token: "bot-token",
-               action: "upload_photo",
-               transport: MockTransport
-             )
-
-    assert_received {:transport_call, "bot-token", "sendChatAction", payload}
-    assert payload["chat_id"] == 123
-    assert payload["action"] == "upload_photo"
-  end
-
-  test "fetch_metadata/2 returns normalized channel info" do
-    assert {:ok, info} =
-             Adapter.fetch_metadata(123,
-               token: "bot-token",
-               transport: MockTransport
-             )
-
-    assert_received {:transport_call, "bot-token", "getChat", payload}
-    assert payload["chat_id"] == 123
-    assert info["id"] == "123"
-    assert info["name"] == "alice"
-    assert info["kind"] == "direct"
-  end
-
-  test "fetch_metadata/2 normalizes struct metadata into plain map" do
-    assert {:ok, info} =
-             Adapter.fetch_metadata(123,
-               token: "bot-token",
-               transport: StructMetadataTransport
-             )
-
-    assert_received {:transport_call, "bot-token", "getChat", payload}
-    assert payload["chat_id"] == 123
-    assert is_map(info)
-    refute Map.has_key?(info, :__struct__)
-    assert info["id"] == "123"
-    assert info["kind"] == "direct"
-    refute Map.has_key?(info, "permissions")
-  end
-
-  test "open_dm/2 maps to user id on telegram" do
-    assert {:ok, "99"} = Adapter.open_dm("99", [])
-  end
-
-  test "post_ephemeral/4 uses fallback dm flow" do
-    assert {:ok, ephemeral} =
-             Adapter.post_ephemeral(123, "99", "secret",
-               fallback_to_dm: true,
-               token: "bot-token",
-               transport: MockTransport
-             )
-
-    assert ephemeral["room_id"] == "99"
-    assert ephemeral["id"] == "42"
-
-    assert_received {:transport_call, "bot-token", "sendMessage", payload}
-    assert payload["chat_id"] == "99"
-    assert payload["text"] == "secret"
-  end
-
-  test "add/remove reaction delegate through transport" do
-    assert :ok =
-             Adapter.add_reaction(123, 42, "👍",
-               token: "bot-token",
-               transport: MockTransport
-             )
-
-    assert_received {:transport_call, "bot-token", "setMessageReaction", payload}
-    assert payload["chat_id"] == 123
-    assert payload["message_id"] == 42
-    assert payload["reaction"] == [%{"type" => "emoji", "emoji" => "👍"}]
-
-    assert :ok =
-             Adapter.remove_reaction(123, 42, "👍",
-               token: "bot-token",
-               transport: MockTransport
-             )
-
-    assert_received {:transport_call, "bot-token", "setMessageReaction", payload2}
-    assert payload2["reaction"] == []
-  end
-
-  test "send_file sends images and maps generic reply/thread options" do
-    result =
-      Adapter.send_file(
-        123,
-        %FileUpload{
-          kind: :image,
-          url: "https://example.com/test.png",
-          metadata: %{"caption" => "hello"}
-        },
-        token: "bot-token",
-        transport: MockTransport,
-        reply_to_id: 42,
-        external_thread_id: 99
+  test "CreateThread requires a name and SendMessage addresses the created topic" do
+    catalog = Telegram.catalog()
+
+    created =
+      Jido.Chat.AdapterTestKit.Assertions.assert_operation_success(
+        run(Jido.Chat.CreateThread, %{"room_id" => "123", "name" => "Topic"}),
+        catalog
       )
 
-    assert {:ok, response} = result
-    assert Adapter.capabilities().send_file == :native
+    assert_receive {:wire, "createForumTopic", payload, _}
+    assert payload == %{"chat_id" => "123", "name" => "Topic"}
+    assert created.type == Jido.Chat.CreateThread.Completed.type()
 
-    assert response["id"] == "77"
-    assert response["room_id"] == "123"
-    assert response["status"] == "sent"
-    assert response["text"] == "hello"
-
-    assert_received {:transport_call, "bot-token", "sendPhoto", payload}
-    assert payload["chat_id"] == 123
-    assert payload["photo"] == "https://example.com/test.png"
-    assert payload["caption"] == "hello"
-    assert payload["reply_to_message_id"] == 42
-    assert payload["message_thread_id"] == 99
-  end
-
-  test "send_file/3 infers parse_mode from top-level format for caption uploads" do
-    assert {:ok, _response} =
-             Adapter.send_file(
-               123,
-               %FileUpload{
-                 kind: :image,
-                 url: "https://example.com/test.png",
-                 metadata: %{"caption" => "hello"}
-               },
-               token: "bot-token",
-               transport: MockTransport,
-               format: :markdown
-             )
-
-    assert_received {:transport_call, "bot-token", "sendPhoto", image_payload}
-    assert image_payload["parse_mode"] == "MarkdownV2"
-
-    assert {:ok, _response} =
-             Adapter.send_file(
-               123,
-               %FileUpload{
-                 kind: :file,
-                 url: "https://example.com/test.pdf",
-                 metadata: %{"caption" => "doc"}
-               },
-               token: "bot-token",
-               transport: MockTransport,
-               format: :html
-             )
-
-    assert_received {:transport_call, "bot-token", "sendDocument", doc_payload}
-    assert doc_payload["parse_mode"] == "HTML"
-  end
-
-  test "send_file/3 keeps explicit parse_mode and omits for plain_text/unknown" do
-    assert {:ok, _response} =
-             Adapter.send_file(
-               123,
-               %FileUpload{
-                 kind: :image,
-                 url: "https://example.com/test.png",
-                 metadata: %{"caption" => "hello"}
-               },
-               token: "bot-token",
-               transport: MockTransport,
-               parse_mode: "Markdown",
-               format: :html
-             )
-
-    assert_received {:transport_call, "bot-token", "sendPhoto", override_payload}
-    assert override_payload["parse_mode"] == "Markdown"
-
-    assert {:ok, _response} =
-             Adapter.send_file(
-               123,
-               %FileUpload{
-                 kind: :file,
-                 url: "https://example.com/test.pdf",
-                 metadata: %{"caption" => "doc"}
-               },
-               token: "bot-token",
-               transport: MockTransport,
-               format: :plain_text
-             )
-
-    assert_received {:transport_call, "bot-token", "sendDocument", plain_text_payload}
-    refute Map.has_key?(plain_text_payload, "parse_mode")
-
-    assert {:ok, _response} =
-             Adapter.send_file(
-               123,
-               %FileUpload{
-                 kind: :file,
-                 url: "https://example.com/test.pdf",
-                 metadata: %{"caption" => "doc"}
-               },
-               token: "bot-token",
-               transport: MockTransport,
-               format: :unknown
-             )
-
-    assert_received {:transport_call, "bot-token", "sendDocument", unknown_payload}
-    refute Map.has_key?(unknown_payload, "parse_mode")
-  end
-
-  test "send_file/3 supports filesystem paths and raw byte uploads" do
-    path =
-      Path.join(
-        System.tmp_dir!(),
-        "jido-telegram-upload-#{System.unique_integer([:positive])}.txt"
+    sent =
+      Jido.Chat.AdapterTestKit.Assertions.assert_operation_success(
+        run(Jido.Chat.SendMessage, %{"room_id" => "123", "thread_id" => created.data["result"]["id"], "text" => "Hello"}),
+        catalog
       )
 
-    File.write!(path, "telegram path upload\n")
+    assert_receive {:wire, "sendMessage", %{"message_thread_id" => "7"}, _}
+    assert sent.type == Jido.Chat.SendMessage.Completed.type()
+    assert :ok = Jido.Chat.AdapterTestKit.Assertions.assert_json_round_trip(sent, catalog)
 
-    on_exit(fn ->
-      File.rm(path)
-    end)
+    assert {:error, _} =
+             Jido.Chat.Signal.CreateThread.new(%{
+               "client_id" => "telegram",
+               "request_id" => "r",
+               "room_id" => "123",
+               "message_id" => "unused"
+             })
 
-    assert {:ok, path_response} =
-             Adapter.send_file(
-               123,
-               %FileUpload{
-                 kind: :file,
-                 path: path,
-                 filename: Path.basename(path)
-               },
-               token: "bot-token",
-               transport: MockTransport
-             )
-
-    assert path_response["id"] == "78"
-    assert_received {:transport_call, "bot-token", "sendDocument", path_payload}
-    assert path_payload["document"] == {:file, path}
-
-    assert {:ok, data_response} =
-             Adapter.send_file(
-               123,
-               %FileUpload{
-                 kind: :file,
-                 data: "telegram bytes upload\n",
-                 filename: "bytes.txt"
-               },
-               token: "bot-token",
-               transport: MockTransport
-             )
-
-    assert data_response["id"] == "78"
-    assert_received {:transport_call, "bot-token", "sendDocument", data_payload}
-    assert data_payload["document"] == {:file_content, "telegram bytes upload\n", "bytes.txt"}
+    refute_receive {:wire, _, _, _}
   end
 
-  test "send_file/3 returns explicit validation errors for missing upload data" do
-    assert {:error, :missing_filename} =
-             Adapter.send_file(
-               123,
-               %FileUpload{kind: :file, data: "telegram bytes upload\n"},
-               token: "bot-token",
-               transport: MockTransport
-             )
+  test "the shared test kit handles core and Telegram extension failures in one catalog" do
+    alias Jido.Chat.AdapterTestKit.Assertions
+    catalog = Telegram.catalog()
 
-    assert {:error, :missing_file_source} =
-             Adapter.send_file(
-               123,
-               %FileUpload{kind: :file, filename: "missing.txt"},
-               token: "bot-token",
-               transport: MockTransport
-             )
+    for action <- [Jido.Chat.SendMessage, Telegram.GetMe] do
+      data = if action == Jido.Chat.SendMessage, do: %{"room_id" => "123", "text" => "Hello"}, else: %{}
+      result = run(action, data, response: {:error, {:rejected, :test}})
+      failed = Assertions.assert_operation_failure(result, catalog)
+      assert failed.type == action.signal_definition().type() <> ".failed"
+      assert :ok = Assertions.assert_json_round_trip(failed, catalog)
+      assert_receive {:wire, _, _, _}
+    end
+
+    completed =
+      Assertions.assert_operation_success(
+        run(Telegram.GetMe, %{}, response: {:ok, %{"id" => 1, "is_bot" => true}}),
+        catalog
+      )
+
+    assert completed.type == Telegram.GetMe.Completed.type()
+    assert :ok = Assertions.assert_json_round_trip(completed, catalog)
   end
 
-  test "typed post_message uses telegram send_file support for canonical uploads" do
-    binding = captured_binding()
+  test "unsupported operations fail before transport I/O" do
+    req = Jido.Chat.AdapterTestKit.Factories.operation_request(client(), :post_ephemeral)
 
-    upload =
-      FileUpload.new(%{
-        kind: :file,
-        url: "https://example.com/test.pdf",
-        filename: "test.pdf",
-        metadata: %{caption: "doc caption"}
-      })
+    assert {:error, %Jido.Chat.Error{code: :unsupported}} =
+             Jido.Exec.run(Jido.Chat.PostEphemeral, %{signal: req}, %{client: client()})
 
-    {:ok, resource} = Chat.put_resource(binding, "file", upload)
+    refute_receive {:wire, _, _, _}
+  end
 
-    request =
-      Jido.Chat.Signal.PostMessage.new!(%{
-        "request_id" => "post",
+  test "core SendFile and Telegram uploads use the same source and result validation" do
+    for {action, kind, method, key} <- [
+          {Jido.Chat.SendFile, "file", "sendDocument", "document"},
+          {Jido.Chat.SendFile, "image", "sendPhoto", "photo"},
+          {Telegram.SendDocument, nil, "sendDocument", "document"},
+          {Telegram.SendPhoto, nil, "sendPhoto", "photo"}
+        ],
+        {source, wire} <- [
+          {reference("file", "/tmp/file.txt"), {:file, "/tmp/file.txt"}},
+          {reference("url", "https://example.com/a.txt"), "https://example.com/a.txt"},
+          {reference(), "file-1"},
+          {%{"content_base64" => Base.encode64("bytes"), "filename" => "a.txt"}, {:file_content, "bytes", "a.txt"}}
+        ] do
+      data = %{
         "room_id" => "123",
-        "content" => %{"kind" => "media", "resource_ref" => resource, "caption" => "doc caption"},
-        "reply_to_id" => "41",
-        "thread_id" => "88"
-      })
-
-    assert {:ok, result} = Chat.execute(binding, request)
-    assert result.data["code"] == nil
-    assert result.data["result"]["id"] == "78"
-    assert result.data["result"]["room_id"] == "123"
-    assert_received {:transport_call, "bot-token", "sendDocument", payload}
-    assert payload["document"] == "https://example.com/test.pdf"
-    assert payload["caption"] == "doc caption"
-    assert payload["reply_to_message_id"] == "41"
-    assert payload["message_thread_id"] == "88"
-  end
-
-  test "add/remove reaction map unsupported transport method to unsupported" do
-    assert {:error, :unsupported} =
-             Adapter.add_reaction(123, 42, "👍",
-               token: "bot-token",
-               transport: ReactionUnsupportedTransport
-             )
-
-    assert {:error, :unsupported} =
-             Adapter.remove_reaction(123, 42, "👍",
-               token: "bot-token",
-               transport: ReactionUnsupportedTransport
-             )
-  end
-
-  test "history/list_threads remain explicitly unsupported in the native boundary" do
-    binding = captured_binding()
-
-    for definition <- [
-          Jido.Chat.Signal.FetchMessages,
-          Jido.Chat.Signal.FetchChannelMessages,
-          Jido.Chat.Signal.ListThreads
-        ] do
-      request = definition.new!(%{"request_id" => Atom.to_string(definition), "room_id" => "123"})
-      assert {:ok, result} = Chat.execute(binding, request)
-      assert result.type == "jido.chat.operation.failed"
-      assert result.data["code"] == "unsupported"
-    end
-
-    refute_received {:transport_call, _, _, _}
-  end
-
-  test "open_thread/3 creates forum topics and normalizes room/thread ids" do
-    assert {:ok, thread} =
-             Adapter.open_thread(123, nil,
-               token: "bot-token",
-               topic_name: "Live Review",
-               transport: MockTransport
-             )
-
-    assert thread.external_thread_id == "321"
-    assert thread.delivery_external_room_id == "123"
-
-    assert_received {:transport_call, "bot-token", "createForumTopic", payload}
-    assert payload["chat_id"] == 123
-    assert payload["name"] == "Live Review"
-  end
-
-  test "open_thread/3 can be explicitly disabled" do
-    assert {:error, :unsupported} =
-             Adapter.open_thread(123, nil,
-               token: "bot-token",
-               supports_forum_topics: false,
-               transport: MockTransport
-             )
-  end
-
-  test "typed webhook messages select the local mention handler" do
-    binding = captured_binding()
-    {:ok, handlers} = Handlers.new()
-
-    {:ok, handlers} =
-      Handlers.on(handlers, Jido.Chat.Signal.MessageReceived, fn _ -> send(self(), :mention) end, mode: :mention)
-
-    update = %{
-      "message" => %{
-        "message_id" => 999,
-        "chat" => %{"id" => 123, "type" => "private"},
-        "from" => %{"id" => 111, "username" => "jane_doe"},
-        "text" => "@jido hello",
-        "entities" => [%{"type" => "mention", "offset" => 0, "length" => 5}]
-      }
-    }
-
-    assert {:ok, _, [incoming]} = accept_webhook(binding, handlers, update)
-    assert incoming.data["room_id"] == "123"
-    assert incoming.data["message_id"] == "999"
-    assert_received :mention
-  end
-
-  test "typed webhook slash commands preserve the separate command handler" do
-    binding = captured_binding()
-    {:ok, handlers} = Handlers.new()
-    {:ok, handlers} = Handlers.on(handlers, Jido.Chat.Signal.SlashCommandReceived, fn _ -> send(self(), :slash_hit) end)
-
-    update = %{
-      "message" => %{
-        "message_id" => 222,
-        "chat" => %{"id" => 123, "type" => "private"},
-        "from" => %{"id" => 111, "username" => "jane"},
-        "text" => "/help topic-a"
-      }
-    }
-
-    assert {:ok, _, [message, command]} = accept_webhook(binding, handlers, update)
-    assert message.data["message_id"] == "222"
-    assert command.data["command"] == "help"
-    assert_received :slash_hit
-  end
-
-  test "typed webhook slash messages also select the message policy handler" do
-    binding = captured_binding()
-    {:ok, handlers} = Handlers.new()
-    {:ok, handlers} = Handlers.on(handlers, Jido.Chat.Signal.SlashCommandReceived, fn _ -> send(self(), :slash_hit) end)
-
-    {:ok, handlers} =
-      Handlers.on(handlers, Jido.Chat.Signal.MessageReceived, fn _ -> send(self(), :message_hit) end,
-        mode: :message,
-        pattern: ~r/^\/help/u
-      )
-
-    update = %{
-      "message" => %{
-        "message_id" => 223,
-        "chat" => %{"id" => 123, "type" => "private"},
-        "from" => %{"id" => 111, "username" => "jane"},
-        "text" => "/help topic-a"
-      }
-    }
-
-    assert {:ok, _, [message, _]} = accept_webhook(binding, handlers, update)
-    assert message.data["message_id"] == "223"
-    assert_received :slash_hit
-    assert_received :message_hit
-  end
-
-  test "typed webhook accepts edited messages as update facts" do
-    binding = captured_binding()
-    {:ok, handlers} = Handlers.new()
-
-    update = %{
-      "edited_message" => %{
-        "message_id" => 333,
-        "chat" => %{"id" => 123, "type" => "private"},
-        "from" => %{"id" => 111, "username" => "jane"},
-        "text" => "edited text"
-      }
-    }
-
-    assert {:ok, _, [incoming]} = accept_webhook(binding, handlers, update)
-    assert incoming.type == "jido.chat.message.updated"
-    assert incoming.data["message_id"] == "333"
-    assert incoming.data["text"] == "edited text"
-  end
-
-  test "typed webhook accepts channel post and edit families" do
-    binding = captured_binding()
-    {:ok, handlers} = Handlers.new()
-
-    for {kind, id, type} <- [
-          {"channel_post", 444, "jido.chat.message.received"},
-          {"edited_channel_post", 445, "jido.chat.message.updated"}
-        ] do
-      update = %{
-        kind => %{
-          "message_id" => id,
-          "chat" => %{"id" => -100_123, "type" => "channel", "title" => "announcements"},
-          "text" => "posted"
-        }
+        "source" => source,
+        "caption" => "Caption",
+        "reply_to_id" => "9",
+        "thread_id" => "7",
+        "format" => "html"
       }
 
-      assert {:ok, _, [fact]} = accept_webhook(binding, handlers, update)
-      assert fact.type == type
-      assert fact.data["room_id"] == "-100123"
-      assert fact.data["message_id"] == Integer.to_string(id)
+      data = if kind, do: Map.put(data, "media_kind", kind), else: data
+      assert {:ok, %{signal: completed}} = run(action, data)
+      assert_receive {:wire, ^method, payload, _}
+      assert payload[key] == wire
+      assert payload["caption"] == "Caption"
+      assert payload["parse_mode"] == "HTML"
+      assert payload["reply_parameters"] == %{"message_id" => "9"}
+      assert payload["message_thread_id"] == "7"
+      result = completed.data["result"]
+      ref = if kind, do: hd(result["media"])["resource_ref"], else: result["resource_ref"]
+      assert ref == reference()
     end
   end
 
-  test "typed webhook actions and reactions select their own handlers" do
-    binding = captured_binding()
-    {:ok, handlers} = Handlers.new()
-    {:ok, handlers} = Handlers.on(handlers, Jido.Chat.Signal.ActionReceived, fn _ -> send(self(), :action_hit) end)
-    {:ok, handlers} = Handlers.on(handlers, Jido.Chat.Signal.ReactionAdded, fn _ -> send(self(), :reaction_hit) end)
+  test "uploads never invent a message ID or accept a missing file ID" do
+    for action <- [Jido.Chat.SendFile, Telegram.SendDocument],
+        raw <- [
+          %{"document" => %{"file_id" => "f"}},
+          %{"message_id" => 42, "chat" => %{"id" => 123}},
+          %{"message_id" => 42, "chat" => %{"id" => 456}, "document" => %{"file_id" => "f"}}
+        ] do
+      assert {:error, %Jido.Chat.Error{code: :invalid_provider_result}} =
+               run(action, %{"room_id" => "123", "source" => reference()}, response: {:ok, raw})
 
-    callback = %{
-      "callback_query" => %{
-        "id" => "cb1",
-        "data" => "approve",
-        "from" => %{"id" => 50},
-        "message" => %{"message_id" => 100, "chat" => %{"id" => 123}}
-      }
-    }
-
-    assert {:ok, _, [action]} = accept_webhook(binding, handlers, callback)
-    assert action.type == "jido.chat.action.received"
-    assert_received :action_hit
-
-    reaction = %{
-      "message_reaction" => %{
-        "chat" => %{"id" => 123},
-        "message_id" => 101,
-        "user" => %{"id" => 50},
-        "new_reaction" => [%{"type" => "emoji", "emoji" => "👍"}],
-        "old_reaction" => []
-      }
-    }
-
-    assert {:ok, _, [fact]} = accept_webhook(binding, handlers, reaction)
-    assert fact.type == "jido.chat.reaction.added"
-    assert_received :reaction_hit
+      assert_receive {:wire, "sendDocument", _, _}
+    end
   end
 
-  test "typed webhook verification rejects the wrong configured secret" do
-    binding = captured_binding(secret_token: "expected")
-    {:ok, handlers} = Handlers.new()
+  test "GetFile and DownloadFile share file resolution and preserve exact JSON bytes" do
+    assert {:ok, %{signal: info}} = run(Telegram.GetFile, %{"resource_ref" => reference()})
+    assert info.data["result"]["file_path"] == "documents/test.json"
+    assert_receive {:wire, "getFile", %{"file_id" => "file-1"}, _}
+    assert {:ok, %{signal: downloaded}} = run(Jido.Chat.DownloadFile, %{"resource_ref" => reference()})
+    assert downloaded.data["result"]["content_base64"] == Base.encode64("{}")
+    assert_receive {:wire, "getFile", %{"file_id" => "file-1"}, _}
+    assert_receive {:wire, "downloadFile", %{"file_path" => "documents/test.json"}, _}
+    assert {:ok, json} = Jido.Signal.Serialization.serialize(downloaded)
+    refute json =~ "private-token"
+    refute json =~ "/bot"
+  end
+
+  test "malformed file metadata cannot trigger a download" do
+    for path <- [nil, "", "../secret", "https://example.com/file", "/etc/passwd"] do
+      assert {:error, %Jido.Chat.Error{code: :invalid_provider_result}} =
+               run(Jido.Chat.DownloadFile, %{"resource_ref" => reference()},
+                 response: {:ok, %{"file_id" => "f", "file_path" => path}}
+               )
+
+      assert_receive {:wire, "getFile", _, _}
+      refute_receive {:wire, "downloadFile", _, _}
+    end
+  end
+
+  test "download errors do not leak token URLs or create a completed Signal" do
+    response = fn
+      "getFile", _ -> {:ok, %{"file_id" => "file-1", "file_path" => "documents/test.json"}}
+      "downloadFile", _ -> {:error, "https://api.telegram.org/file/botprivate-token/path"}
+    end
+
+    assert {:error, %Jido.Chat.Error{signal: failed}} =
+             run(Jido.Chat.DownloadFile, %{"resource_ref" => reference()}, response: response)
+
+    refute inspect(failed) =~ "private-token"
+  end
+
+  test "webhook Actions make one explicit call and keep the secret in private context" do
+    assert {:ok, %{signal: set}} =
+             run(Telegram.SetWebhook, %{
+               "url" => "https://example.com/webhook",
+               "allowed_updates" => ["message"],
+               "drop_pending_updates" => false
+             })
+
+    assert set.data["result"]["acknowledged"]
+
+    assert_receive {:wire, "setWebhook",
+                    %{
+                      "url" => "https://example.com/webhook",
+                      "secret_token" => "private-secret",
+                      "drop_pending_updates" => false
+                    }, _}
+
+    assert {:ok, %{signal: info}} = run(Telegram.GetWebhookInfo, %{})
+    assert info.data["result"]["pending_update_count"] == 0
+    assert_receive {:wire, "getWebhookInfo", %{}, _}
+    assert {:ok, _} = run(Telegram.DeleteWebhook, %{"drop_pending_updates" => false})
+    assert_receive {:wire, "deleteWebhook", %{"drop_pending_updates" => false}, _}
+    assert {:ok, json} = Jido.Signal.Serialization.serialize(set)
+    refute json =~ "private-secret"
+    refute_receive {:wire, _, _, _}
+  end
+
+  test "webhook verification is pure and requires a configured secret" do
+    assert :ok = Telegram.Webhook.verify(client(), [{"X-Telegram-Bot-Api-Secret-Token", "private-secret"}])
+    assert {:error, :invalid_webhook_secret} = Telegram.Webhook.verify(client(), %{})
 
     assert {:error, :invalid_webhook_secret} =
-             accept_webhook(binding, handlers, %{"message" => %{"message_id" => 1}}, %{
-               "x-telegram-bot-api-secret-token" => "wrong"
-             })
-  end
+             Telegram.Webhook.verify(client(), %{"x-telegram-bot-api-secret-token" => "other"})
 
-  test "unsupported webhook updates return a registered failure fact" do
-    request = Jido.Chat.WebhookRequest.new(%{adapter_name: :telegram, payload: %{"poll" => %{"id" => "p1"}}})
-    assert {:ok, %{signals: [failure]}} = Chat.normalize_event(captured_binding(), request)
-    assert failure.type == "jido.chat.normalization.failed"
-    assert failure.data["code"] == "unsupported_item"
+    assert {:error, :missing_webhook_secret} = Telegram.Webhook.verify(%{client() | credentials: %{}}, %{})
+    refute_receive {:wire, _, _, _}
   end
 end

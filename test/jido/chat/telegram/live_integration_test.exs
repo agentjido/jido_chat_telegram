@@ -1,10 +1,29 @@
 defmodule Jido.Chat.Telegram.LiveIntegrationTest do
   use ExUnit.Case, async: false
 
-  alias Jido.Chat
+  alias Jido.Chat.{Client, Signal}
+  alias Jido.Chat.Telegram, as: Telegram
   alias Jido.Chat.Telegram.Adapter
-  alias Jido.Chat.Telegram.Extensions
-  alias Jido.Chat.FileUpload
+
+  @run_live System.get_env("RUN_LIVE_TELEGRAM_TESTS") in ["1", "true", "TRUE", "yes", "on"]
+  @token System.get_env("TELEGRAM_BOT_TOKEN")
+  @chat_id System.get_env("TELEGRAM_TEST_CHAT_ID")
+  @forum_chat_id System.get_env("TELEGRAM_TEST_FORUM_CHAT_ID")
+  @thread_id System.get_env("TELEGRAM_TEST_THREAD_ID")
+  @reaction System.get_env("TELEGRAM_TEST_REACTION") || "👍"
+  @callback_timeout_ms System.get_env("TELEGRAM_CALLBACK_TIMEOUT_MS", "180000") |> String.to_integer()
+  @moduletag :live
+  @moduletag :telegram_live
+  @moduletag timeout: max(210_000, @callback_timeout_ms + 30_000)
+  @moduletag capture_log: true
+
+  if not @run_live do
+    @moduletag skip: "set RUN_LIVE_TELEGRAM_TESTS=true to run live Telegram integration tests"
+  end
+
+  if @run_live and (@token in [nil, ""] or @chat_id in [nil, ""]) do
+    @moduletag skip: "set TELEGRAM_BOT_TOKEN and TELEGRAM_TEST_CHAT_ID"
+  end
 
   defmodule CaptureTransport do
     @behaviour Jido.Chat.Telegram.Transport
@@ -12,734 +31,513 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
     def call(token, method, payload, opts) do
       result = Jido.Chat.Telegram.Transport.ExGramClient.call(token, method, payload, opts)
 
-      case result do
-        {:ok, value} when is_map(value) ->
-          id = Map.get(value, "message_id") || Map.get(value, :message_id)
-          if id, do: Process.put({__MODULE__, to_string(id)}, value)
-
-        _ ->
-          :ok
-      end
+      if owner = Process.whereis(Jido.Chat.Telegram.LiveIntegrationTest),
+        do: send(owner, {:telegram_response, method, payload, result})
 
       result
     end
   end
 
-  defp provider_raw(%{raw: raw}), do: raw
-  defp provider_raw(message), do: Process.get({CaptureTransport, message_id(message)}, %{})
+  defmodule DraftFlow do
+    use Jido.Flow, name: "telegram_live_draft_flow"
 
-  defp native_media(message, ctx) do
-    {:ok, binding} = Chat.bind(Adapter, Keyword.put(ctx.opts, :id, "live-media"))
-    payload = if is_struct(message), do: Map.from_struct(message), else: message
-    payload = Map.put_new(payload, :from, %{id: 9_999_002, first_name: "Fixture"})
-    {:ok, %{signals: [fact]}} = Chat.normalize_event(binding, %{message: payload})
+    flow do
+      step("first", action: Telegram.SendDraft, params: %{signal: input(:first)})
+      step("second", action: Telegram.SendDraft, params: %{signal: input(:second)}, needs: ["first"])
+      step("finish", action: Jido.Chat.SendMessage, params: %{signal: input(:finish)}, needs: ["second"])
 
-    Enum.map(fact.data["media"], fn item ->
-      {:ok, private} = Chat.resolve_resource(binding, item["resource_ref"])
-      private
-    end)
-  end
-
-  defp native_post(room, payload, opts) do
-    {:ok, binding} = Chat.bind(Adapter, Keyword.put(opts, :id, "live-post"))
-    [file] = payload.files
-    {:ok, ref} = Chat.put_resource(binding, "file", Jido.Chat.FileUpload.normalize(file))
-
-    data = %{
-      "request_id" => Jido.Chat.ID.generate!(),
-      "room_id" => to_string(room),
-      "content" => %{"kind" => "media", "resource_ref" => ref, "caption" => payload.text}
-    }
-
-    data = if opts[:thread_id], do: Map.put(data, "thread_id", to_string(opts[:thread_id])), else: data
-
-    with {:ok, request} <- Jido.Chat.Signal.PostMessage.new(data),
-         {:ok, result} <- Chat.execute(binding, request),
-         do: {:ok, result.data["result"]}
-  end
-
-  @run_live System.get_env("RUN_LIVE_TELEGRAM_TESTS") in ["1", "true", "TRUE", "yes", "on"]
-  @token System.get_env("TELEGRAM_BOT_TOKEN")
-  @chat_id System.get_env("TELEGRAM_TEST_CHAT_ID")
-  @forum_chat_id System.get_env("TELEGRAM_TEST_FORUM_CHAT_ID")
-  @thread_id (case System.get_env("TELEGRAM_TEST_THREAD_ID") do
-                nil ->
-                  nil
-
-                "" ->
-                  nil
-
-                value ->
-                  case Integer.parse(value) do
-                    {int, ""} -> int
-                    _ -> value
-                  end
-              end)
-  @callback_query_id System.get_env("TELEGRAM_TEST_CALLBACK_QUERY_ID")
-  @reaction System.get_env("TELEGRAM_TEST_REACTION") || "👍"
-  @photo_ref System.get_env("TELEGRAM_TEST_PHOTO_REF")
-  @document_ref System.get_env("TELEGRAM_TEST_DOCUMENT_REF")
-  @download_ref System.get_env("TELEGRAM_TEST_DOWNLOAD_REF")
-
-  @moduletag :live
-  @moduletag :telegram_live
-
-  if not @run_live do
-    @moduletag skip: "set RUN_LIVE_TELEGRAM_TESTS=true to run live Telegram integration tests"
-  end
-
-  if @run_live and (is_nil(@token) or @token == "" or is_nil(@chat_id) or @chat_id == "") do
-    @moduletag skip: "set TELEGRAM_BOT_TOKEN and TELEGRAM_TEST_CHAT_ID when RUN_LIVE_TELEGRAM_TESTS=true"
-  end
-
-  setup_all do
-    {:ok, token: @token, chat_id: @chat_id, opts: adapter_opts(@token)}
-  end
-
-  test "send/edit/delete message against live Telegram Bot API", ctx do
-    text = "jido live integration #{System.system_time(:millisecond)}"
-
-    assert {:ok, sent} = Adapter.send_message(ctx.chat_id, text, ctx.opts)
-    message_id = message_id(sent)
-    assert message_id
-
-    assert {:ok, edited} =
-             Adapter.edit_message(ctx.chat_id, message_id, text <> " (edited)", ctx.opts)
-
-    assert message_id(edited) == message_id
-    assert :ok = Adapter.delete_message(ctx.chat_id, message_id, ctx.opts)
-  end
-
-  test "typing and metadata calls succeed against live Telegram API", ctx do
-    assert :ok = Adapter.start_typing(ctx.chat_id, ctx.opts)
-
-    assert {:ok, info} = Adapter.fetch_metadata(ctx.chat_id, ctx.opts)
-    assert info["id"] == to_string(ctx.chat_id)
-  end
-
-  test "stream sends draft updates and a final message against live Telegram Bot API", ctx do
-    parts = [
-      "jido",
-      " telegram",
-      " streaming",
-      " draft",
-      " updates",
-      " should",
-      " be",
-      " visible"
-    ]
-
-    chunk_stream =
-      Stream.concat([
-        [hd(parts)],
-        Stream.map(tl(parts), fn chunk ->
-          Process.sleep(650)
-          chunk
-        end)
-      ])
-
-    assert {:ok, sent} =
-             Adapter.stream(
-               ctx.chat_id,
-               chunk_stream,
-               Keyword.merge(ctx.opts,
-                 draft_id: System.unique_integer([:positive]),
-                 stream_update_interval_ms: 500
-               )
-             )
-
-    message_id = message_id(sent)
-    assert message_id
-
-    Process.sleep(2_000)
-    assert :ok = Adapter.delete_message(ctx.chat_id, message_id, ctx.opts)
-  end
-
-  test "rich send, reply, edit, and stream succeed against live Telegram Bot API", ctx do
-    timestamp = System.system_time(:millisecond)
-
-    assert {:ok, root} =
-             Adapter.send_message(
-               ctx.chat_id,
-               "jido rich integration root #{timestamp}",
-               ctx.opts
-             )
-
-    root_id = message_id(root)
-
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, root_id, ctx.opts)
-      end)
-    end)
-
-    markdown = """
-    ## Jido rich integration
-
-    | Check | Result |
-    | --- | --- |
-    | send | pass |
-    """
-
-    assert {:ok, reply} =
-             Adapter.send_message(
-               ctx.chat_id,
-               markdown,
-               Keyword.merge(ctx.opts, format: :rich_markdown, reply_to_id: root_id)
-             )
-
-    reply_id = message_id(reply)
-
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, reply_id, ctx.opts)
-      end)
-    end)
-
-    assert map_get(provider_raw(reply), [:rich_message, "rich_message"])
-
-    assert to_string(
-             provider_raw(reply)
-             |> map_get([:reply_to_message, "reply_to_message"])
-             |> map_get([:message_id, "message_id"])
-           ) == root_id
-
-    assert {:ok, edited} =
-             Adapter.edit_message(
-               ctx.chat_id,
-               reply_id,
-               "<h2>Jido rich integration</h2><p>Edit passed.</p>",
-               Keyword.put(ctx.opts, :format, :rich_html)
-             )
-
-    assert message_id(edited) == reply_id
-    assert map_get(provider_raw(edited), [:rich_message, "rich_message"])
-
-    assert {:ok, streamed} =
-             Adapter.stream(
-               ctx.chat_id,
-               ["## Jido rich stream", "\n\nStream completed."],
-               Keyword.merge(ctx.opts,
-                 draft_id: System.unique_integer([:positive]),
-                 stream_update_interval_ms: 0,
-                 format: :rich_markdown
-               )
-             )
-
-    streamed_id = message_id(streamed)
-
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, streamed_id, ctx.opts)
-      end)
-    end)
-
-    assert map_get(provider_raw(streamed), [:rich_message, "rich_message"])
-  end
-
-  test "reply continuity preserves reply_to metadata and optional topic routing", ctx do
-    root_text = "jido telegram reply root #{System.system_time(:millisecond)}"
-    reply_text = "jido telegram reply child #{System.system_time(:millisecond)}"
-
-    assert {:ok, root} = Adapter.send_message(ctx.chat_id, root_text, ctx.opts)
-    root_id = message_id(root)
-
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, root_id, ctx.opts)
-      end)
-    end)
-
-    assert {:ok, reply} =
-             Adapter.send_message(
-               ctx.chat_id,
-               reply_text,
-               Keyword.put(ctx.opts, :reply_to_id, root_id)
-             )
-
-    reply_id = message_id(reply)
-
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, reply_id, ctx.opts)
-      end)
-    end)
-
-    reply_to_message = map_get(provider_raw(reply), [:reply_to_message, "reply_to_message"])
-
-    if is_map(reply_to_message) do
-      assert to_string(map_get(reply_to_message, [:message_id, "message_id"])) == root_id
-    else
-      assert reply_id != root_id
-
-      assert to_string(map_get(provider_raw(reply), [:chat, "chat"]) |> map_get([:id, "id"])) ==
-               to_string(ctx.chat_id)
-    end
-
-    if @thread_id do
-      assert to_string(map_get(provider_raw(reply), [:message_thread_id, "message_thread_id"])) ==
-               to_string(@thread_id)
+      output(%{
+        first: result("first", [:signal]),
+        second: result("second", [:signal]),
+        signal: result("finish", [:signal])
+      })
     end
   end
 
-  test "reaction flow is either native or explicitly unsupported", ctx do
-    assert {:ok, sent} =
-             Adapter.send_message(
-               ctx.chat_id,
-               "jido telegram reaction target #{System.system_time(:millisecond)}",
-               ctx.opts
-             )
-
-    message_id = message_id(sent)
-
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, message_id, ctx.opts)
-      end)
-    end)
-
-    case Adapter.add_reaction(ctx.chat_id, message_id, @reaction, ctx.opts) do
-      :ok ->
-        assert :ok = Adapter.remove_reaction(ctx.chat_id, message_id, @reaction, ctx.opts)
-
-      {:error, :unsupported} ->
-        assert {:error, :unsupported} =
-                 Adapter.remove_reaction(ctx.chat_id, message_id, @reaction, ctx.opts)
-    end
+  setup do
+    Process.register(self(), __MODULE__)
+    client = Client.new!(Adapter, id: "telegram.live", credentials: %{token: @token}, transport: CaptureTransport)
+    %{client: client, room_id: to_string(@chat_id), nonce: Integer.to_string(System.system_time(:microsecond))}
   end
 
-  test "webhook handling pipeline processes Telegram-shaped payload", ctx do
-    {:ok, binding} = Chat.bind(Adapter, Keyword.put(ctx.opts, :id, "live-webhook"))
-    {:ok, handlers} = Jido.Chat.Handlers.new()
+  test "core send, edit, and delete return native result Signals", ctx do
+    sent = run(ctx, Jido.Chat.SendMessage, %{"room_id" => ctx.room_id, "text" => "Jido live send #{ctx.nonce}"})
 
-    {:ok, handlers} =
-      Jido.Chat.Handlers.on(handlers, Jido.Chat.Signal.SlashCommandReceived, fn _ -> send(self(), :slash_seen) end)
-
-    payload = %{
-      "message" => %{
-        "message_id" => 9_999_001,
-        "chat" => %{"id" => ctx.chat_id, "type" => "private"},
-        "from" => %{"id" => 9_999_002, "username" => "live_user"},
-        "text" => "/help integration"
-      }
-    }
-
-    assert {:ok, delivery} = Chat.normalize_event(binding, payload)
-    assert {:ok, _handlers, _} = Jido.Chat.Handlers.accept(handlers, binding, delivery)
-    assert_received :slash_seen
-  end
-
-  test "extension media sends succeed against live Telegram Bot API", ctx do
-    photo_ref = @photo_ref || "https://httpbin.org/image/png"
-
-    document_ref =
-      @document_ref || "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
-
-    assert {:ok, photo} =
-             Extensions.send_photo(ctx.chat_id, photo_ref,
-               token: ctx.token,
-               caption: "jido live photo #{System.system_time(:millisecond)}"
-             )
-
-    assert photo.kind == :photo
-    assert to_string(photo.chat_id) == to_string(ctx.chat_id)
-    photo_id = message_id(photo)
-
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, photo_id, ctx.opts)
-      end)
-    end)
-
-    incoming_media = native_media(photo.raw, ctx)
-
-    assert [%{kind: :image, media_type: "image/jpeg"} = photo_media] = incoming_media
-    assert String.starts_with?(photo_media.url, "telegram://file/")
-
-    assert {:ok, photo_bytes} = Adapter.fetch_media(photo_media, token: ctx.token)
-    assert <<0xFF, 0xD8, 0xFF, _rest::binary>> = photo_bytes
-
-    assert {:ok, document} =
-             Extensions.send_document(ctx.chat_id, document_ref,
-               token: ctx.token,
-               caption: "jido live document #{System.system_time(:millisecond)}"
-             )
-
-    assert document.kind == :document
-    assert to_string(document.chat_id) == to_string(ctx.chat_id)
-    document_id = message_id(document)
-
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, document_id, ctx.opts)
-      end)
-    end)
-  end
-
-  test "file download preserves raw JSON attachment bytes", ctx do
-    download_ref = @download_ref || "https://httpbin.org/json"
-
-    assert {:ok, document} =
-             Extensions.send_document(ctx.chat_id, download_ref,
-               token: ctx.token,
-               caption: "jido live download #{System.system_time(:millisecond)}"
-             )
-
-    assert is_binary(document.file_id) and document.file_id != ""
-    {delete_id, ""} = document |> message_id() |> Integer.parse()
-
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, delete_id, ctx.opts)
-      end)
-    end)
-
-    file_ref = "telegram://file/#{document.file_id}"
-
-    assert {:ok, file_info} = Extensions.get_file(%{url: file_ref}, token: ctx.token)
-    assert file_info.file_id == document.file_id
-    assert is_binary(file_info.file_path) and file_info.file_path != ""
-
-    assert {:ok, uri_bytes} = Extensions.download_file(file_ref, token: ctx.token)
-    assert {:ok, raw_id_bytes} = Extensions.download_file(document.file_id, token: ctx.token)
-    assert uri_bytes == raw_id_bytes
-    assert {:ok, decoded} = Jason.decode(uri_bytes)
-    assert is_map(decoded)
-  end
-
-  test "live Telegram media responses normalize and download", ctx do
-    ex_gram_opts = live_ex_gram_opts(ctx.token)
-
-    assert {:ok, sticker_message} =
-             ExGram.send_sticker(
-               ctx.chat_id,
-               {:file_content, live_fixture("static-sticker.webp.b64"), "jido-live-sticker.webp"},
-               ex_gram_opts
-             )
-
-    delete_after_test(sticker_message, ctx)
-    sticker = assert_live_media(sticker_message, :sticker, :image, ctx)
-    assert sticker.width == 512
-    assert sticker.height == 512
-    assert sticker.metadata.telegram.is_animated == false
-    assert sticker.metadata.telegram.is_video == false
-
-    assert {:ok, animation_message} =
-             ExGram.send_animation(
-               ctx.chat_id,
-               {:file_content, live_fixture("square-video.mp4.b64"), "jido-live-animation.mp4"},
-               ex_gram_opts
-             )
-
-    delete_after_test(animation_message, ctx)
-    assert map_get(animation_message, [:document, "document"])
-
-    animation = assert_live_media(animation_message, :animation, :video, ctx)
-    assert animation.media_type == "video/mp4"
-    assert animation.width == 240
-    assert animation.height == 240
-
-    assert {:ok, video_note_message} =
-             ExGram.send_video_note(
-               ctx.chat_id,
-               {:file_content, live_fixture("square-video.mp4.b64"), "jido-live-video-note.mp4"},
-               ex_gram_opts
-             )
-
-    delete_after_test(video_note_message, ctx)
-    video_note = assert_live_media(video_note_message, :video_note, :video, ctx)
-    assert video_note.width == 240
-    assert video_note.height == 240
-    assert video_note.duration == 1
-  end
-
-  test "canonical media sends succeed through send_file and core post_message", ctx do
-    photo_ref = @photo_ref || "https://httpbin.org/image/png"
-
-    document_ref =
-      @document_ref || "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
-
-    photo_upload =
-      FileUpload.new(%{
-        kind: :image,
-        url: photo_ref,
-        filename: "live-photo.png",
-        metadata: %{caption: "jido canonical photo #{System.system_time(:millisecond)}"}
+    edited =
+      run(ctx, Jido.Chat.EditMessage, %{
+        "room_id" => ctx.room_id,
+        "message_id" => sent["id"],
+        "text" => "Jido live edit #{ctx.nonce}"
       })
 
-    assert {:ok, photo} = Adapter.send_file(ctx.chat_id, photo_upload, ctx.opts)
-    photo_id = message_id(photo)
+    assert edited["id"] == sent["id"]
+    assert edited["status"] == "updated"
 
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, photo_id, ctx.opts)
-      end)
-    end)
-
-    payload =
-      Jido.Chat.PostPayload.new(%{
-        text: "jido canonical document #{System.system_time(:millisecond)}",
-        files: [
-          %{
-            kind: :file,
-            url: document_ref,
-            filename: "live-document.pdf"
-          }
-        ]
-      })
-
-    assert {:ok, document} =
-             native_post(ctx.chat_id, payload, ctx.opts)
-
-    document_id = message_id(document)
-
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, document_id, ctx.opts)
-      end)
-    end)
-
-    assert photo_id
-    assert document_id
+    assert run(ctx, Jido.Chat.DeleteMessage, %{"room_id" => ctx.room_id, "message_id" => sent["id"]}) == %{
+             "acknowledged" => true
+           }
   end
 
-  test "send_file accepts local filesystem paths and raw byte uploads", ctx do
-    path =
-      write_temp_file(
-        "jido-telegram-live-",
-        ".txt",
-        "telegram live file #{System.system_time(:millisecond)}\n"
+  test "typing, metadata, direct addressing, and bot identity use Actions", ctx do
+    assert run(ctx, Jido.Chat.StartTyping, %{"room_id" => ctx.room_id}) == %{"acknowledged" => true}
+    assert run(ctx, Jido.Chat.FetchMetadata, %{"room_id" => ctx.room_id})["id"] == ctx.room_id
+    assert run(ctx, Jido.Chat.OpenDm, %{"user_id" => ctx.room_id})["id"] == ctx.room_id
+    bot = run(ctx, Telegram.GetMe, %{})
+    assert bot["is_bot"]
+    assert is_binary(bot["username"])
+  end
+
+  test "webhook status is read through a native Action without changing delivery", ctx do
+    info = run(ctx, Telegram.GetWebhookInfo, %{})
+    assert info["url"] == ""
+    assert is_integer(info["pending_update_count"])
+    assert info["has_custom_certificate"] == false
+  end
+
+  test "public send_text and send_file use typed Actions and download the same bytes", ctx do
+    assert {:ok, sent} = Jido.Chat.send_text(ctx.client, ctx.room_id, "Jido send_text #{ctx.nonce}", format: :plain)
+    assert sent.type == Jido.Chat.SendMessage.Completed.type()
+    assert_round_trip(sent, Jido.Chat.SendMessage)
+    cleanup(ctx, sent.data["result"]["id"])
+
+    bytes = "Jido send_file #{ctx.nonce}\n"
+    source = %{"content_base64" => Base.encode64(bytes), "filename" => "jido-text-api.txt"}
+    assert {:ok, uploaded} = Jido.Chat.send_file(ctx.client, ctx.room_id, source, caption: "Public send_file")
+    assert uploaded.type == Jido.Chat.SendFile.Completed.type()
+    assert_round_trip(uploaded, Jido.Chat.SendFile)
+    cleanup(ctx, uploaded.data["result"]["id"])
+    [media] = uploaded.data["result"]["media"]
+    downloaded = run(ctx, Jido.Chat.DownloadFile, %{"resource_ref" => media["resource_ref"]})
+    assert Base.decode64!(downloaded["content_base64"]) == bytes
+  end
+
+  test "public stream_text selects rich drafts and persists the final message", ctx do
+    chunks = ["**Jido stream_text", " verified** #{ctx.nonce}"]
+
+    assert {:ok, completed} =
+             Jido.Chat.stream_text(ctx.client, ctx.room_id, chunks, format: :markdown, update_interval_ms: 0)
+
+    assert completed.type == Jido.Chat.StreamText.Completed.type()
+    assert_round_trip(completed, Jido.Chat.StreamText)
+    cleanup(ctx, completed.data["result"]["id"])
+    assert_receive {:telegram_response, "sendRichMessageDraft", first, {:ok, true}}
+    assert_receive {:telegram_response, "sendRichMessageDraft", second, {:ok, true}}
+    assert first["draft_id"] == second["draft_id"]
+    assert first["rich_message"] == %{"markdown" => "**Jido stream_text**"}
+    assert_receive {:telegram_response, "sendRichMessage", final, {:ok, raw}}
+    assert final["rich_message"] == %{"markdown" => Enum.join(chunks)}
+    assert field(raw, "rich_message")
+    refute_receive {:telegram_response, "editMessageText", _, _}
+  end
+
+  test "public stream_text can select send and edit for the same private chat", ctx do
+    text = "Jido edit stream #{ctx.nonce}"
+
+    assert {:ok, completed} =
+             Jido.Chat.stream_text(ctx.client, ctx.room_id, ["Jido edit stream ", ctx.nonce],
+               update_interval_ms: 0,
+               options: [stream_delivery: :edit]
+             )
+
+    assert completed.type == Jido.Chat.StreamText.Completed.type()
+    assert completed.data["result"]["text"] == text
+    cleanup(ctx, completed.data["result"]["id"])
+    assert_receive {:telegram_response, "sendMessage", first, {:ok, _}}
+    assert first["text"] == "Jido edit stream "
+    assert_receive {:telegram_response, "editMessageText", edit, {:ok, raw}}
+    assert edit["text"] == text
+    assert to_string(field(raw, "message_id")) == completed.data["result"]["id"]
+    refute_receive {:telegram_response, "sendMessageDraft", _, _}
+  end
+
+  test "finite rendering and SendMessage send one final message without hidden draft writes", ctx do
+    result =
+      run(ctx, Jido.Chat.SendMessage, %{
+        "room_id" => ctx.room_id,
+        "text" => Jido.Chat.Markdown.StreamRenderer.render(["Jido finite ", "stream ", ctx.nonce])
+      })
+
+    cleanup(ctx, result["id"])
+    assert result["text"] == "Jido finite stream #{ctx.nonce}"
+    assert_receive {:telegram_response, "sendMessage", _, {:ok, _}}
+    refute_receive {:telegram_response, "sendMessageDraft", _, _}
+    refute_receive {:telegram_response, "sendRichMessageDraft", _, _}
+  end
+
+  test "explicit draft Actions and final send compose in native Flow", ctx do
+    draft_id = System.unique_integer([:positive])
+
+    first =
+      command(ctx, Telegram.SendDraft, %{
+        "room_id" => ctx.room_id,
+        "draft_id" => draft_id,
+        "text" => "Jido draft #{ctx.nonce}"
+      })
+
+    second =
+      command(ctx, Telegram.SendDraft, %{
+        "room_id" => ctx.room_id,
+        "draft_id" => draft_id,
+        "text" => "Jido draft complete #{ctx.nonce}"
+      })
+
+    finish =
+      command(ctx, Jido.Chat.SendMessage, %{"room_id" => ctx.room_id, "text" => "Jido draft complete #{ctx.nonce}"})
+
+    assert {:ok, %{first: a, second: b, signal: sent}} =
+             Jido.Exec.run(DraftFlow, %{first: first, second: second, finish: finish}, %{client: ctx.client},
+               max_attempts: 1
+             )
+
+    assert a.data["result"]["acknowledged"]
+    assert b.data["result"]["draft_id"] == draft_id
+    cleanup(ctx, sent.data["result"]["id"])
+  end
+
+  test "rich send, reply, edit, and finite stream use the Signal boundary", ctx do
+    root = send_message(ctx, "Jido rich root #{ctx.nonce}")
+
+    reply =
+      run(ctx, Jido.Chat.SendMessage, %{
+        "room_id" => ctx.room_id,
+        "text" => "## Jido rich\n\n| Check | Result |\n| --- | --- |\n| send | pass |",
+        "format" => "markdown",
+        "reply_to_id" => root["id"]
+      })
+
+    cleanup(ctx, reply["id"])
+    raw = raw_response("sendRichMessage")
+    assert field(raw, "rich_message")
+    assert to_string(field(field(raw, "reply_to_message"), "message_id")) == root["id"]
+
+    edited =
+      run(
+        ctx,
+        Jido.Chat.EditMessage,
+        %{
+          "room_id" => ctx.room_id,
+          "message_id" => reply["id"],
+          "text" => "<h2>Jido rich edit passed</h2>",
+          "format" => "html"
+        }
       )
 
-    on_exit(fn ->
-      File.rm(path)
-    end)
+    assert edited["id"] == reply["id"]
+    assert field(raw_response("editMessageText"), "rich_message")
 
-    path_upload =
-      FileUpload.new(%{
-        kind: :file,
-        path: path,
-        filename: Path.basename(path)
+    streamed =
+      run(ctx, Jido.Chat.SendMessage, %{
+        "room_id" => ctx.room_id,
+        "text" => Jido.Chat.Markdown.StreamRenderer.render(["## Jido rich stream", "\n\nCompleted."]),
+        "format" => "markdown"
       })
 
-    assert {:ok, path_response} = Adapter.send_file(ctx.chat_id, path_upload, ctx.opts)
-    path_message_id = path_response.external_message_id || path_response.message_id
+    cleanup(ctx, streamed["id"])
+    assert field(raw_response("sendRichMessage"), "rich_message")
+  end
 
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, path_message_id, ctx.opts)
-      end)
-    end)
+  test "reply continuity retains the actual provider reply metadata", ctx do
+    root = send_message(ctx, "Jido reply root #{ctx.nonce}")
+    raw_response("sendMessage")
 
-    bytes_upload =
-      FileUpload.new(%{
-        kind: :file,
-        data: "telegram live bytes #{System.system_time(:millisecond)}\n",
-        filename: "telegram-live-bytes.txt",
-        media_type: "text/plain"
+    reply =
+      run(ctx, Jido.Chat.SendMessage, %{
+        "room_id" => ctx.room_id,
+        "text" => "Jido reply child #{ctx.nonce}",
+        "reply_to_id" => root["id"]
       })
 
-    assert {:ok, bytes_response} = Adapter.send_file(ctx.chat_id, bytes_upload, ctx.opts)
-    bytes_message_id = bytes_response.external_message_id || bytes_response.message_id
+    cleanup(ctx, reply["id"])
+    raw = raw_response("sendMessage")
+    assert to_string(field(field(raw, "reply_to_message"), "message_id")) == root["id"]
+    assert to_string(field(field(raw, "chat"), "id")) == ctx.room_id
+  end
 
-    on_exit(fn ->
-      cleanup_delete(fn ->
-        Adapter.delete_message(ctx.chat_id, bytes_message_id, ctx.opts)
-      end)
-    end)
+  test "native reaction Actions add and remove a real reaction", ctx do
+    sent = send_message(ctx, "Jido reaction #{ctx.nonce}")
+    data = %{"room_id" => ctx.room_id, "message_id" => sent["id"], "reaction" => @reaction}
+    assert run(ctx, Jido.Chat.AddReaction, data) == %{"acknowledged" => true}
+    assert run(ctx, Jido.Chat.RemoveReaction, data) == %{"acknowledged" => true}
+  end
 
-    assert path_message_id
-    assert bytes_message_id
+  test "document upload, metadata, and DownloadFile preserve exact JSON bytes", ctx do
+    bytes = Jason.encode!(%{"sdk" => "jido", "nonce" => ctx.nonce})
+
+    result =
+      run(ctx, Telegram.SendDocument, %{
+        "room_id" => ctx.room_id,
+        "source" => upload(bytes, "jido-live.json"),
+        "caption" => "Jido JSON #{ctx.nonce}"
+      })
+
+    cleanup(ctx, result["id"])
+    ref = result["resource_ref"]
+    info = run(ctx, Telegram.GetFile, %{"resource_ref" => ref})
+    assert info["resource_ref"] == ref
+    assert is_binary(info["file_path"])
+    fetched = run(ctx, Jido.Chat.DownloadFile, %{"resource_ref" => ref})
+    assert Base.decode64!(fetched["content_base64"]) == bytes
+    assert Jason.decode!(Base.decode64!(fetched["content_base64"]))["sdk"] == "jido"
+  end
+
+  test "photo, sticker, animation, and video note Actions normalize and download", ctx do
+    for {action, fixture, media_field, kind, width, height} <- [
+          {Telegram.SendPhoto, "photo.png.b64", "photo", "image", 64, 64},
+          {Telegram.SendSticker, "static-sticker.webp.b64", "sticker", "image", 512, 512},
+          {Telegram.SendAnimation, "square-video.mp4.b64", "animation", "video", 240, 240},
+          {Telegram.SendVideoNote, "square-video.mp4.b64", "video_note", "video", 240, 240}
+        ] do
+      result =
+        run(ctx, action, %{
+          "room_id" => ctx.room_id,
+          "source" => upload(fixture(fixture), String.replace_suffix(fixture, ".b64", ""))
+        })
+
+      cleanup(ctx, result["id"])
+
+      method =
+        %{
+          Telegram.SendPhoto => "sendPhoto",
+          Telegram.SendSticker => "sendSticker",
+          Telegram.SendAnimation => "sendAnimation",
+          Telegram.SendVideoNote => "sendVideoNote"
+        }[action]
+
+      raw = raw_response(method)
+      assert field(raw, media_field)
+      assert {:ok, %{signals: [fact]}} = Jido.Chat.normalize(ctx.client, %{message: raw})
+      assert fact.type == Signal.MessageReceived.type()
+      assert [media] = fact.data["media"]
+      assert media["kind"] == kind
+      assert media["width"] == width
+      assert media["height"] == height
+
+      if media_field == "sticker",
+        do: assert(media["metadata"]["telegram"] == %{"is_animated" => false, "is_video" => false})
+
+      if media_field == "video_note", do: assert(media["duration"] == 1)
+      fetched = run(ctx, Jido.Chat.DownloadFile, %{"resource_ref" => media["resource_ref"]})
+      assert byte_size(Base.decode64!(fetched["content_base64"])) > 0
+    end
+  end
+
+  test "SendFile accepts an explicit local file reference", ctx do
+    path = Path.join(System.tmp_dir!(), "jido-live-#{ctx.nonce}.txt")
+    File.write!(path, "Jido local upload #{ctx.nonce}")
+    on_exit(fn -> File.rm(path) end)
+
+    sent =
+      run(ctx, Jido.Chat.SendFile, %{
+        "room_id" => ctx.room_id,
+        "source" => %{"client_id" => ctx.client.id, "kind" => "file", "id" => path}
+      })
+
+    cleanup(ctx, sent["id"])
+    assert is_binary(sent["id"])
+    assert [media] = sent["media"]
+    fetched = run(ctx, Jido.Chat.DownloadFile, %{"resource_ref" => media["resource_ref"]})
+    assert Base.decode64!(fetched["content_base64"]) == File.read!(path)
+  end
+
+  test "Telegram poll extension runs through Router and Dispatch", ctx do
+    request =
+      command(ctx, Telegram.SendPoll, %{
+        "room_id" => ctx.room_id,
+        "question" => "Jido live poll #{ctx.nonce}",
+        "options" => ["Actions", "Signals"]
+      })
+
+    router =
+      Jido.Signal.Router.new!([{Telegram.Signal.SendPoll, Jido.Instruction.template(:action, Telegram.SendPoll)}])
+
+    assert {:ok, [template]} = Jido.Signal.Router.route(router, request)
+    assert {:ok, instruction} = Jido.Instruction.bind(template, %{signal: request}, %{client: ctx.client})
+    assert {:ok, %{signal: completed}} = Jido.Exec.run(instruction)
+    assert completed.type == Telegram.SendPoll.Completed.type()
+    assert is_binary(completed.data["result"]["poll_id"])
+    cleanup(ctx, completed.data["result"]["id"])
+    assert :ok = Jido.Signal.Dispatch.dispatch(completed, {:pid, [target: self()]})
+    assert_receive {:signal, ^completed}
+    assert_round_trip(completed, Telegram.SendPoll)
   end
 
   if @forum_chat_id not in [nil, ""] do
-    test "open_thread creates a forum topic when TELEGRAM_TEST_FORUM_CHAT_ID is provided", ctx do
-      topic_name = "jido live topic #{System.system_time(:millisecond)}"
+    test "CreateThread creates a real forum topic and routes its message", ctx do
+      forum = %{ctx | room_id: @forum_chat_id}
 
-      assert {:ok, topic} =
-               Adapter.open_thread(@forum_chat_id, nil,
-                 token: ctx.token,
-                 supports_forum_topics: true,
-                 topic_name: topic_name
-               )
+      topic =
+        run(forum, Jido.Chat.CreateThread, %{
+          "room_id" => @forum_chat_id,
+          "name" => "Jido live #{ctx.nonce}"
+        })
 
-      assert topic.external_thread_id
-      assert to_string(topic.delivery_external_room_id) == to_string(@forum_chat_id)
+      sent =
+        run(forum, Jido.Chat.SendMessage, %{
+          "room_id" => @forum_chat_id,
+          "thread_id" => topic["id"],
+          "text" => "Jido topic #{ctx.nonce}"
+        })
 
-      assert {:ok, sent} =
-               Adapter.send_message(
-                 @forum_chat_id,
-                 "jido live topic message #{System.system_time(:millisecond)}",
-                 token: ctx.token,
-                 thread_id: topic.external_thread_id
-               )
+      cleanup(forum, sent["id"])
+      assert to_string(field(raw_response("sendMessage"), "message_thread_id")) == topic["id"]
+    end
+  else
+    test "CreateThread rejects a non-forum chat with a failure Signal", ctx do
+      request =
+        command(ctx, Jido.Chat.CreateThread, %{
+          "room_id" => ctx.room_id,
+          "name" => "Jido invalid forum"
+        })
 
-      message_id = message_id(sent)
-      assert message_id
+      assert {:error, %Jido.Chat.Error{signal: failed}} =
+               Jido.Exec.run(Jido.Chat.CreateThread, %{signal: request}, %{client: ctx.client}, max_attempts: 1)
 
-      on_exit(fn ->
-        cleanup_delete(fn ->
-          Adapter.delete_message(@forum_chat_id, message_id, token: ctx.token)
-        end)
+      assert failed.type == Jido.Chat.CreateThread.Failed.type()
+      assert failed.data["code"] == "provider_failure"
+      assert failed.data["outcome"] == "rejected"
+      assert_round_trip(failed, Jido.Chat.CreateThread)
+    end
+  end
+
+  test "fresh Desktop callback becomes a Signal and is answered by an Action", ctx do
+    value = "jido:verify:#{ctx.nonce}"
+
+    keyboard = %{"rows" => [[%{"text" => "Verify Jido SDK", "value" => value}]]}
+
+    sent =
+      run(ctx, Jido.Chat.SendMessage, %{
+        "room_id" => ctx.room_id,
+        "text" => "Jido Desktop live check #{ctx.nonce}",
+        "keyboard" => keyboard
+      })
+
+    cleanup(ctx, sent["id"])
+    IO.puts("\nDESKTOP CALLBACK READY: Verify Jido SDK (#{ctx.nonce})\n")
+    fact = await_callback(ctx, value, nil, System.monotonic_time(:millisecond) + @callback_timeout_ms)
+    assert fact.type == Signal.ActionReceived.type()
+    assert fact.data["room_id"] == ctx.room_id
+
+    answer =
+      run(ctx, Telegram.AnswerCallbackQuery, %{
+        "interaction_id" => fact.data["interaction_id"],
+        "text" => "Jido Action and Signal verified",
+        "show_alert" => true
+      })
+
+    assert answer["answered"]
+
+    run(ctx, Jido.Chat.EditMessage, %{
+      "room_id" => ctx.room_id,
+      "message_id" => sent["id"],
+      "text" => "Verified: Jido Action and Signal received your click (#{ctx.nonce})",
+      "keyboard" => %{"rows" => []}
+    })
+
+    assert :ok = Jido.Signal.Dispatch.dispatch(fact, {:pid, [target: self()]})
+    assert_receive {:signal, ^fact}
+    bus = start_supervised!({Jido.Signal.Bus, name: :telegram_live_events})
+    assert {:ok, _} = Jido.Signal.Bus.subscribe(bus, "jido.chat.action.received")
+    assert {:ok, [_]} = Jido.Signal.Bus.publish(bus, [fact])
+  end
+
+  defp await_callback(ctx, value, offset, deadline) do
+    assert System.monotonic_time(:millisecond) < deadline,
+           "Click Verify Jido SDK in Telegram Desktop within #{div(@callback_timeout_ms, 1000)} seconds"
+
+    data = %{"timeout" => 2, "limit" => 100, "allowed_updates" => []}
+    data = if offset, do: Map.put(data, "offset", offset), else: data
+    result = run(ctx, Telegram.FetchUpdates, data)
+
+    facts =
+      Enum.map(result["signals"], fn wire ->
+        {:ok, fact} = Jido.Signal.Catalog.decode(Jido.Chat.catalog(), Jason.encode!(wire))
+        fact
       end)
-    end
-  else
-    test "open_thread requires TELEGRAM_TEST_FORUM_CHAT_ID for live forum coverage" do
-      assert is_nil(@forum_chat_id) or @forum_chat_id == ""
-    end
+
+    Enum.find(facts, &(&1.type == Signal.ActionReceived.type() and &1.data["value"] == value)) ||
+      await_callback(ctx, value, result["next_offset"], deadline)
   end
 
-  test "webhook handling supports channel_post and edited_channel_post shapes", ctx do
-    {:ok, binding} = Chat.bind(Adapter, Keyword.put(ctx.opts, :id, "live-channel"))
+  defp command(ctx, action, data) do
+    data =
+      if @thread_id not in [nil, ""] and
+           action in [
+             Jido.Chat.SendMessage,
+             Jido.Chat.SendFile,
+             Jido.Chat.StartTyping,
+             Telegram.SendPhoto,
+             Telegram.SendDocument,
+             Telegram.SendSticker,
+             Telegram.SendAnimation,
+             Telegram.SendVideoNote,
+             Telegram.SendPoll,
+             Telegram.SendDraft
+           ],
+         do: Map.put_new(data, "thread_id", @thread_id),
+         else: data
 
-    channel_post = %{
-      "channel_post" => %{
-        "message_id" => 9_999_011,
-        "chat" => %{"id" => ctx.chat_id, "type" => "channel", "title" => "live"},
-        "from" => %{"id" => 9_999_012, "username" => "live_user"},
-        "text" => "live channel post"
-      }
-    }
-
-    edited_channel_post = %{
-      "edited_channel_post" => %{
-        "message_id" => 9_999_013,
-        "chat" => %{"id" => ctx.chat_id, "type" => "channel", "title" => "live"},
-        "from" => %{"id" => 9_999_014, "username" => "live_user"},
-        "text" => "live edited channel post"
-      }
-    }
-
-    assert {:ok, %{signals: [incoming_1]}} = Chat.normalize_event(binding, channel_post)
-    assert incoming_1.data["message_id"] == "9999011"
-
-    assert {:ok, %{signals: [incoming_2]}} = Chat.normalize_event(binding, edited_channel_post)
-    assert incoming_2.data["message_id"] == "9999013"
+    action.signal_definition().new!(
+      Map.merge(
+        %{"client_id" => ctx.client.id, "request_id" => "#{ctx.nonce}:#{System.unique_integer([:positive])}"},
+        data
+      )
+    )
   end
 
-  test "unsupported core surfaces remain explicit unsupported contracts", ctx do
-    {:ok, binding} = Chat.bind(Adapter, Keyword.put(ctx.opts, :id, "live-unsupported"))
+  defp run(ctx, action, data, opts \\ []) do
+    request = command(ctx, action, data)
 
-    for definition <- [
-          Jido.Chat.Signal.FetchMessages,
-          Jido.Chat.Signal.FetchChannelMessages,
-          Jido.Chat.Signal.ListThreads
-        ] do
-      request = definition.new!(%{"request_id" => Atom.to_string(definition), "room_id" => to_string(ctx.chat_id)})
-      assert {:ok, failure} = Chat.execute(binding, request)
-      assert failure.data["code"] == "unsupported"
-    end
+    assert {:ok, %{signal: completed}} =
+             Jido.Exec.run(action, %{signal: request}, %{client: ctx.client, options: opts}, max_attempts: 1)
 
-    assert {:error, :unsupported} = Adapter.post_ephemeral(ctx.chat_id, "telegram-user", "secret", ctx.opts)
-    {:ok, ref} = Chat.put_resource(binding, "modal", Jido.Chat.Modal.new(%{title: "modal"}))
-
-    request =
-      Jido.Chat.Signal.OpenModal.new!(%{"request_id" => "modal", "room_id" => to_string(ctx.chat_id), "modal" => ref})
-
-    assert {:ok, failure} = Chat.execute(binding, request)
-    assert failure.data["code"] == "unsupported"
+    assert completed.data["client_id"] == ctx.client.id
+    assert completed.data["request_id"] == request.data["request_id"]
+    assert completed.extensions["causationid"] == request.id
+    assert_round_trip(completed, action)
+    completed.data["result"]
   end
 
-  if @callback_query_id not in [nil, ""] do
-    test "manual callback query answer succeeds when TELEGRAM_TEST_CALLBACK_QUERY_ID is provided",
-         ctx do
-      case Extensions.answer_callback_query(@callback_query_id,
-             token: ctx.token,
-             text: "ack from live integration test",
-             show_alert: false
-           ) do
-        {:ok, result} ->
-          assert result.answered == true
-          assert result.callback_query_id == @callback_query_id
-
-        {:error, error} ->
-          message = Exception.message(error)
-
-          assert message =~ "query is too old" or
-                   message =~ "query ID is invalid"
-      end
-    end
-  else
-    test "manual callback query answer requires TELEGRAM_TEST_CALLBACK_QUERY_ID" do
-      assert is_nil(@callback_query_id) or @callback_query_id == ""
-    end
+  defp assert_round_trip(signal, action) do
+    catalog = Jido.Signal.Catalog.new!(Enum.uniq(Jido.Chat.signal_definitions() ++ action.signal_definitions()))
+    assert {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+    assert {:ok, ^signal} = Jido.Signal.Catalog.decode(catalog, json)
+    refute json =~ @token
   end
 
-  defp adapter_opts(token) do
-    opts = [token: token, transport: Jido.Chat.Telegram.LiveIntegrationTest.CaptureTransport]
-
-    case @thread_id do
-      nil -> opts
-      thread_id -> Keyword.put(opts, :thread_id, thread_id)
-    end
+  defp send_message(ctx, text) do
+    result = run(ctx, Jido.Chat.SendMessage, %{"room_id" => ctx.room_id, "text" => text})
+    cleanup(ctx, result["id"])
+    result
   end
 
-  defp live_ex_gram_opts(token) do
-    opts = [token: token, adapter: Jido.Chat.Telegram.ExGramAdapter]
-
-    case @thread_id do
-      nil -> opts
-      thread_id -> Keyword.put(opts, :message_thread_id, thread_id)
-    end
-  end
-
-  defp delete_after_test(message, ctx) do
-    id = message_id(message)
-
+  defp cleanup(ctx, id) do
     on_exit(fn ->
-      cleanup_delete(fn -> Adapter.delete_message(ctx.chat_id, id, ctx.opts) end)
+      request =
+        Signal.DeleteMessage.new!(%{
+          "client_id" => ctx.client.id,
+          "request_id" => "cleanup:#{id}",
+          "room_id" => ctx.room_id,
+          "message_id" => id
+        })
+
+      Jido.Chat.execute(ctx.client, request)
     end)
   end
 
-  defp assert_live_media(message, field, expected_kind, ctx) do
-    assert map_get(message, [field, Atom.to_string(field)])
-    incoming_media = native_media(message, ctx)
-    assert [media] = incoming_media
-    assert media.kind == expected_kind
-    assert String.starts_with?(media.url, "telegram://file/")
-
-    assert {:ok, bytes} = Adapter.fetch_media(media, token: ctx.token)
-    assert is_binary(bytes) and byte_size(bytes) > 0
-
-    media
+  defp raw_response(method) do
+    assert_receive {:telegram_response, ^method, _, {:ok, raw}}, 2_000
+    raw
   end
 
-  defp live_fixture(filename) do
-    __DIR__
-    |> Path.join("fixtures")
-    |> Path.join(filename)
-    |> File.read!()
-    |> String.replace(~r/\s/, "")
-    |> Base.decode64!()
-  end
+  defp upload(bytes, filename), do: %{"content_base64" => Base.encode64(bytes), "filename" => filename}
 
-  defp message_id(%{"id" => value}) when not is_nil(value), do: to_string(value)
-  defp message_id(%{message_id: value}) when not is_nil(value), do: to_string(value)
-  defp message_id(%{external_message_id: value}) when not is_nil(value), do: to_string(value)
+  defp fixture(filename),
+    do: __DIR__ |> Path.join("fixtures/#{filename}") |> File.read!() |> String.replace(~r/\s/, "") |> Base.decode64!()
 
-  defp cleanup_delete(fun) when is_function(fun, 0) do
-    case fun.() do
-      :ok -> :ok
-      {:ok, _result} -> :ok
-      {:error, :not_found} -> :ok
-      {:error, _reason} -> :ok
-    end
-  end
+  defp field(nil, _), do: nil
 
-  defp write_temp_file(prefix, suffix, contents) do
-    path =
-      Path.join(
-        System.tmp_dir!(),
-        "#{prefix}#{System.unique_integer([:positive])}#{suffix}"
-      )
-
-    File.write!(path, contents)
-    path
-  end
-
-  defp map_get(map, keys) when is_map(map) and is_list(keys) do
-    Enum.find_value(keys, fn key -> Map.get(map, key) end)
-  end
-
-  defp map_get(_map, _keys), do: nil
+  defp field(map, key),
+    do:
+      Map.get(map, key) ||
+        Enum.find_value(Map.to_list(map), fn {k, v} -> if is_atom(k) and Atom.to_string(k) == key, do: v end)
 end

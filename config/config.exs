@@ -1,5 +1,12 @@
 import Config
 
+if config_env() in [:dev, :test] do
+  config :covenant,
+    contracts_dir: "test/contracts",
+    test_paths: ["test/contracts/**/*_test.exs"],
+    sibling_dir: false
+end
+
 config :git_hooks, auto_install: false
 
 if config_env() == :dev do

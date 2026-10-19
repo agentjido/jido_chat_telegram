@@ -1,0 +1,231 @@
+{
+  "apps": {
+    "jido_chat_telegram": {
+      "active": 18,
+      "coverage": 1.0,
+      "covered": 18
+    }
+  },
+  "components": {
+    "jido_chat_telegram.actions": {
+      "active": 6,
+      "app": "jido_chat_telegram",
+      "coverage": 1.0,
+      "covered": 6,
+      "form": "light",
+      "obligations": {
+        "jido_chat_telegram.actions.I1": {
+          "failing": 0,
+          "kind": "functional",
+          "passing": 1,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test all fourteen Actions execute exact provider calls for two clients through Exec and Chat"
+          ]
+        },
+        "jido_chat_telegram.actions.I2": {
+          "failing": 0,
+          "kind": "security",
+          "passing": 1,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test forged requests, foreign references, missing credentials, and legacy options make no provider call"
+          ]
+        },
+        "jido_chat_telegram.actions.I3": {
+          "failing": 0,
+          "kind": "security",
+          "passing": 2,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test Telegram status failures expose safe categories and hints without raw details or retries",
+            "test every Action rejects malformed provider success and a deadline makes one attempt"
+          ]
+        },
+        "jido_chat_telegram.actions.I4": {
+          "failing": 0,
+          "kind": "ordering",
+          "passing": 2,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test explicit draft Actions write once and webhook secrets stay in private context",
+            "test webhook verification is pure and requires the configured exact secret"
+          ]
+        },
+        "jido_chat_telegram.actions.I5": {
+          "failing": 0,
+          "kind": "ordering",
+          "passing": 2,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test a failed mixed Flow dependency prevents the provider Action write",
+            "test mixed Flow and typed Router Instruction Dispatch compose with provider Signals"
+          ]
+        },
+        "jido_chat_telegram.actions.I6": {
+          "failing": 0,
+          "kind": "persisted_format",
+          "passing": 1,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test every agent schema pins its wire envelope and accepts only its serialized request"
+          ]
+        }
+      }
+    },
+    "jido_chat_telegram.adapter": {
+      "active": 6,
+      "app": "jido_chat_telegram",
+      "coverage": 1.0,
+      "covered": 6,
+      "form": "light",
+      "obligations": {
+        "jido_chat_telegram.adapter.I1": {
+          "failing": 0,
+          "kind": "functional",
+          "passing": 1,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test public exports, exact capabilities, configured discovery, and startup metadata stay fixed"
+          ]
+        },
+        "jido_chat_telegram.adapter.I2": {
+          "failing": 0,
+          "kind": "ordering",
+          "passing": 1,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test core text, edits, acknowledgements, metadata, direct rooms, and topics use the declared wire fields"
+          ]
+        },
+        "jido_chat_telegram.adapter.I3": {
+          "failing": 0,
+          "kind": "persisted_format",
+          "passing": 2,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test GetFile and DownloadFile agree and unsafe metadata stops before any download",
+            "test core files and all provider media share portable source and canonical reference behavior"
+          ]
+        },
+        "jido_chat_telegram.adapter.I4": {
+          "failing": 0,
+          "kind": "functional",
+          "passing": 1,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test all ten incoming event types retain order, item identity, safe projections, and client scope"
+          ]
+        },
+        "jido_chat_telegram.adapter.I5": {
+          "failing": 0,
+          "kind": "ordering",
+          "passing": 1,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test pulling preserves normalized facts and only returns host-owned next offsets"
+          ]
+        },
+        "jido_chat_telegram.adapter.I6": {
+          "failing": 0,
+          "kind": "ordering",
+          "passing": 2,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test stream mode selection consumes one source, closes it, and flushes exact final text",
+            "test stream rejection stops reads and does not retry or change delivery mode"
+          ]
+        }
+      }
+    },
+    "jido_chat_telegram.signals": {
+      "active": 6,
+      "app": "jido_chat_telegram",
+      "coverage": 1.0,
+      "covered": 6,
+      "form": "light",
+      "obligations": {
+        "jido_chat_telegram.signals.I1": {
+          "failing": 0,
+          "kind": "persisted_format",
+          "passing": 1,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test all forty-two definition identities and JSON data schemas match the fixed manifest"
+          ]
+        },
+        "jido_chat_telegram.signals.I2": {
+          "failing": 0,
+          "kind": "functional",
+          "passing": 1,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test every typed constructor rejects missing required fields, unknown fields, and runtime values"
+          ]
+        },
+        "jido_chat_telegram.signals.I3": {
+          "failing": 0,
+          "kind": "persisted_format",
+          "passing": 1,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test every definition round trips with causal context through provider and configured catalogs"
+          ]
+        },
+        "jido_chat_telegram.signals.I4": {
+          "failing": 0,
+          "kind": "security",
+          "passing": 1,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test the Action boundary rejects private context and produces only canonical public results"
+          ]
+        },
+        "jido_chat_telegram.signals.I5": {
+          "failing": 0,
+          "kind": "functional",
+          "passing": 2,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test media, keyboards, and file metadata keep the shared portable constraints",
+            "test poll, draft, callback, fetch, and webhook constraints preserve valid false and zero values"
+          ]
+        },
+        "jido_chat_telegram.signals.I6": {
+          "failing": 0,
+          "kind": "security",
+          "passing": 2,
+          "status": "active",
+          "testable": true,
+          "tests": [
+            "test incoming count, failure, Signal size, and Delivery size limits reject the complete batch",
+            "test the Action accepts the exact Signal byte limit and rejects one additional byte before I/O"
+          ]
+        }
+      }
+    }
+  },
+  "covenant": "0.2.0",
+  "totals": {
+    "active": 18,
+    "coverage": 1.0,
+    "covered": 18
+  }
+}

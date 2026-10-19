@@ -6,7 +6,7 @@ contract.
 ## Working Rules
 
 - Keep shared chat behavior in `Jido.Chat.Adapter` callbacks.
-- Put Telegram-only helpers in `Jido.Chat.Telegram.Extensions`.
+- Use flat Telegram Actions and native request/result Signals for Telegram-only operations.
 - Keep live API tests tagged `:live` and excluded by default.
 - Do not commit `.env` or token values.
 - Preserve the adapter boundary; runtime supervision belongs in `jido_messaging`.

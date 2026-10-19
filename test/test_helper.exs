@@ -16,4 +16,6 @@ if Code.ensure_loaded?(Dotenvy) do
   end)
 end
 
-ExUnit.start(exclude: [:live])
+ExUnit.start(exclude: [:live], formatters: [ExUnit.CLIFormatter, Covenant.Formatter])
+
+Code.require_file("contracts/support/fixtures_helper.exs", __DIR__)

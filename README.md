@@ -1,71 +1,286 @@
 # Jido Chat Telegram
 
-[![Hex.pm](https://img.shields.io/hexpm/v/jido_chat_telegram.svg)](https://hex.pm/packages/jido_chat_telegram)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/jido_chat_telegram/)
-[![CI](https://github.com/agentjido/jido_chat_telegram/actions/workflows/ci.yml/badge.svg)](https://github.com/agentjido/jido_chat_telegram/actions/workflows/ci.yml)
-[![License](https://img.shields.io/hexpm/l/jido_chat_telegram.svg)](https://github.com/agentjido/jido_chat_telegram/blob/main/LICENSE)
-[![Website](https://img.shields.io/badge/website-jido.run-0f172a.svg)](https://jido.run)
-[![Ecosystem](https://img.shields.io/badge/ecosystem-jido.run-0ea5e9.svg)](https://jido.run/ecosystem)
-[![Discord](https://img.shields.io/badge/discord-join-5865F2.svg?logo=discord&logoColor=white)](https://jido.run/discord)
+## V3 checkpoint
 
-`jido_chat_telegram` provides the `Jido.Chat.Telegram.Adapter` adapter for the public Chat Signal contract.
+This branch requires the Jido v3 Chat API. All dependencies use Hex.
+`jido_chat ~> 3.0.0-dev` is not published as of 2026-10-19.
+Dependency resolution and tests remain blocked until a compatible release is available.
+The lock file retains existing Hex entries; resolve it again after publication.
 
-## Release status
-
-This branch proposes version 2.0. It changes the public communication API.
-Use the immutable PR source commits for review and tests. The new Hex releases
-are not yet published. Production requires Chat 2.0 and compatible upstream
-Signal releases. The dependency helpers keep source pins in development and test.
-
-## Typed operations
-
-The application supplies private binding options and a provider room ID:
+Stateless Telegram provider library for the next major release of Jido Chat.
 
 ```elixir
-{:ok, binding} = Jido.Chat.bind(Jido.Chat.Telegram.Adapter, private_binding_options)
-request = Jido.Chat.Signal.SendMessage.new!(%{
-  "request_id" => "request-1",
-  "room_id" => provider_room_id,
-  "text" => "Hello"
+client = Jido.Chat.Client.new!(Jido.Chat.Telegram.Adapter,
+  id: "support.telegram",
+  credentials: %{token: token}
+)
+
+{:ok, result_signal} = Jido.Chat.send_text(client, room_id, "Hello")
+
+{:ok, delivery} = Jido.Chat.normalize(client, provider_input)
+
+poll = Jido.Chat.Telegram.Signal.SendPoll.new!(%{
+  "client_id" => client.id,
+  "request_id" => "poll:1",
+  "room_id" => room_id,
+  "question" => "Ship today?",
+  "options" => ["Yes", "No"]
 })
-{:ok, result} = Jido.Chat.execute(binding, request)
+
+{:ok, %{signal: completed}} =
+  Jido.Exec.run(Jido.Chat.Telegram.SendPoll, %{signal: poll}, %{client: client})
 ```
 
-The result is an OperationCompleted or OperationFailed signal. Repeating an
-admitted request uses its saved result. Private tokens, clients and resources
-stay outside signal data. Unsupported operations return a defined typed result.
+All Telegram extension Actions use `Jido.ChatAction`. Each has a native request
+Signal, a strict result schema, and generated `Completed` and `Failed` Signals.
+Run extensions through `Jido.Chat.execute/3`, `Jido.Exec`, Flow, or a Router-selected Instruction.
 
-## Inbound delivery
-
-Normalize one complete verified provider input unit with the configured binding:
+| Telegram Actions | Purpose |
+| --- | --- |
+| `SendPoll` | Send a poll |
+| `SendPhoto`, `SendDocument`, `SendSticker`, `SendAnimation`, `SendVideoNote` | Upload bytes or use a portable file reference |
+| `GetFile`, `GetMe` | Read file metadata or bot identity |
+| `AnswerCallbackQuery` | Answer an `ActionReceived` interaction |
+| `SendDraft` | Make one explicit draft update |
+| `FetchUpdates` | Read one update batch and return normalized Signals plus `next_offset` |
+| `SetWebhook`, `GetWebhookInfo`, `DeleteWebhook` | Make one explicit webhook request |
 
 ```elixir
-{:ok, delivery} = Jido.Chat.normalize_event(binding, verified_provider_input)
-{:ok, observations} = MyApp.Messaging.accept_delivery(delivery)
+Jido.Chat.Telegram.actions()            # 14 extension Actions
+Jido.Chat.Telegram.operations()         # request definition / Action pairs
+Jido.Chat.Telegram.event_definitions()  # 10 admitted incoming facts
+Jido.Chat.Telegram.signal_definitions() # 42 extension definitions
+catalog = Jido.Chat.Telegram.catalog()  # 86 core + 42 Telegram definitions
+
+photo = Jido.Chat.Telegram.Signal.SendPhoto.new!(%{
+  "client_id" => client.id,
+  "request_id" => "photo:1",
+  "room_id" => room_id,
+  "source" => %{
+    "content_base64" => Base.encode64(File.read!("photo.png")),
+    "filename" => "photo.png"
+  },
+  "caption" => "SDK check"
+})
+
+{:ok, %{signal: uploaded}} =
+  Jido.Exec.run(Jido.Chat.Telegram.SendPhoto, %{signal: photo}, %{client: client})
+
+ref = uploaded.data["result"]["resource_ref"]
+# %{"client_id" => client.id, "kind" => "media", "id" => "telegram://file/..."}
+
+{:ok, json} = Jido.Signal.Serialization.serialize(uploaded)
+{:ok, ^uploaded} = Jido.Signal.Catalog.decode(catalog, json)
 ```
 
-The Messaging instance owns runtime acceptance. Deliveries retain ordered facts
-and explicit item failures. Membership evidence does not create grants or start
-message handlers. A rejected listener sink follows the provider checkpoint rule.
-Configure protocol version 1 before starting provider listeners.
+Upload Signals have a 262,144-byte envelope limit. Use core `Jido.Chat.SendFile`
+with a client-scoped local file reference for larger uploads. Do not put tokens
+or raw provider structs in a Signal.
 
-## Operation support
+```elixir
+defmodule ReplyFlow do
+  use Jido.Flow, name: "telegram_reply"
 
-Native: `send_message`, `send_file`, `edit_message`, `delete_message`, `start_typing`, `fetch_metadata`, `fetch_media`, `add_reaction`, `remove_reaction`, `stream`, `open_thread`, `open_dm`.
+  flow do
+    step "draft", action: Jido.Chat.Telegram.SendDraft,
+      params: %{signal: input(:draft)}
 
-Fallback: `post_message`, `fetch_thread`, `post_ephemeral`, `post_channel_message`.
+    step "send", action: Jido.Chat.SendMessage,
+      params: %{signal: input(:message)}, needs: ["draft"]
 
-All other operations are explicitly unsupported. See the frozen [adapter matrix](https://github.com/agentjido/jido_chat/blob/codex/public-signal-v3/docs/migration/adapter-matrix.json).
+    output(result("send"))
+  end
+end
 
-## Provider setup
+{:ok, %{signal: completed}} =
+  Jido.Exec.run(ReplyFlow, %{draft: draft_signal, message: message_signal}, %{client: client})
+```
 
-Telegram uses ExGram. Webhooks and polling use the same native mapper. Private chat drafts support streaming. Group and channel targets use the declared fallback. Telegram extension helpers remain available for provider-specific media work.
+Use the main functions for common calls:
 
-## Checks and migration
+```elixir
+Jido.Chat.send_text(client, room_id, "Hello", format: :plain)
+Jido.Chat.stream_text(client, room_id, chunks, format: :markdown)
+Jido.Chat.send_file(client, room_id,
+  %{"content_base64" => Base.encode64("report"), "filename" => "report.txt"})
+Jido.Chat.edit_message(client, room_id, message_id, "Updated")
+Jido.Chat.add_reaction(client, room_id, message_id, "👍")
+Jido.Chat.remove_reaction(client, room_id, message_id, "👍")
+Jido.Chat.delete_message(client, room_id, message_id)
+{:ok, downloaded} = Jido.Chat.download_file(client, resource_ref)
+bytes = Base.decode64!(downloaded.data["result"]["content_base64"])
+{:ok, metadata} = Jido.Chat.fetch_metadata(client, room_id)
+{:ok, typing} = Jido.Chat.start_typing(client, room_id)
+{:ok, created} = Jido.Chat.create_thread(client, forum_room_id, "Release")
+thread_id = created.data["result"]["id"]
+Jido.Chat.start_typing(client, forum_room_id, thread_id: thread_id)
+Jido.Chat.send_text(client, forum_room_id, "Ready", thread_id: thread_id)
+Jido.Chat.capabilities(client)
+```
 
-Run `mix test` and `mix quality`. Live tests stay excluded by default. The fixed
-provider fixtures do not need credentials or live traffic.
+The operation functions return completion Signals from the existing Actions.
+Edits accept `format` and `keyboard`; an empty keyboard clears buttons.
+Deletes and reactions return `result["acknowledged"]`. Downloads return base64
+bytes in the result Signal. Each operation accepts `request_id`, private
+`options`, `signal_options`, and an execution `timeout` in milliseconds (default `:infinity`). Capability discovery performs no I/O and uses
+canonical keys, including `:send_message` for `send_text`. It reports declared
+support; it does not check current bot permissions.
 
-See the [migration guide](https://github.com/agentjido/jido_chat/blob/codex/public-signal-v3/docs/migration/MIGRATION_GUIDE.md)
-for API mappings, the complete runnable local example, limits, release order and
-rollback pins. Run `mix docs` to build this package's API documentation.
+Metadata results contain `id`, `kind`, and optional `name`. Typing sends one notice
+and returns an acknowledgement. The host owns any timer that repeats it.
+Thread creation creates a named forum topic and returns `id`, `room_id`, and `name`.
+The destination must support topics and the bot must have topic permission.
+
+`stream_text` runs the core StreamText Action. Telegram selects draft previews
+for positive numeric private chat IDs and persists the complete message when the
+source ends. Other destinations use send and edit. The default interval between
+intermediate writes is 1000 ms. Final content is always flushed. Markdown previews
+repair incomplete syntax; the final send keeps the original text.
+
+Set `config: [stream_delivery: :edit]` on the Client to use edits for private chats.
+A call can override it with `options: [stream_delivery: :edit]`. Modes are `:auto`,
+`:draft`, and `:edit`. There is no retry or change of mode after a failed write.
+An unknown outcome can leave a partial message. The host owns recovery.
+The source is consumed once in the Jido.Exec execution task. The adapter adds no
+worker, queue, process tree, or stored stream state. A host can also compose the
+individual SendDraft and SendMessage Actions directly, as in the Flow above.
+
+`FetchUpdates` accepts `offset`, `limit`, `timeout`, and `allowed_updates`. Its
+result contains serialized native Signal envelopes. Decode them with `Jido.Chat.catalog(client)`. The host stores `next_offset` and schedules the next call. A host with
+webhook delivery passes each update to `Jido.Chat.normalize/3` instead.
+
+The host supplies credentials and owns listeners, acknowledgements, duplicate
+checks, storage, and retries. The adapter does not retain Clients or provider
+deliveries. Use `transport: MyTransport` to select a test or host transport.
+
+Binding, resource storage, listener factories, and managed ingress workers are
+removed. Low-level provider transports remain available. Normalizer and Membership are internal helpers.
+
+[Covenant contracts](guides/contracts.md) define the adapter, Telegram Actions,
+and Signals. They use fixed fixtures and a recording transport. Run the contract
+gate with `mix test.contracts`.
+
+For local development:
+
+```sh
+mix deps.get
+mix test
+mix quality
+```
+
+Live tests are excluded by default. Set `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_TEST_CHAT_ID` in the environment or the local `.env`. Then run:
+
+```sh
+RUN_LIVE_TELEGRAM_TESTS=true \
+  mix test test/jido/chat/telegram/live_integration_test.exs --include live --trace
+```
+
+The existing 17-test live suite uses core and Telegram Actions with real provider calls. It
+checks replies, reactions, rich messages, the three main functions, both stream delivery paths, draft Flow, file
+bytes, media dimensions, Router, Catalog, Dispatch, and Bus. The final test needs
+a fresh click on **Verify Jido SDK** in Telegram within three minutes. It answers
+that callback through `AnswerCallbackQuery`; an expired callback cannot pass.
+Use a test bot with no other polling consumer and no active webhook.
+Set `TELEGRAM_CALLBACK_TIMEOUT_MS` to allow more time for the manual button check.
+
+The separate 21-test public API suite calls all eleven operation functions and
+`Jido.Chat.capabilities` with the Telegram adapter. It checks request and trace context,
+Markdown and HTML, replies and keyboards, lazy streams, draft and edit delivery,
+inline and local uploads, reuse of file references, exact document downloads,
+normalization, edits and keyboard removal, deletion, reactions, room metadata,
+typing notices, topic creation and delivery to the returned thread ID, capability
+discovery, input validation, and real provider rejections. Downloads use
+`Jido.Chat.download_file`; cleanup uses `Jido.Chat.delete_message`.
+It also checks `Jido.Chat.execute` with one real FetchUpdates request. It does not call Actions directly.
+Its transport observer forwards every request to the real Telegram transport.
+
+```sh
+RUN_LIVE_TELEGRAM_TESTS=true \
+  mix test test/jido/chat/telegram/public_api_live_test.exs --include live --trace
+```
+
+This suite needs no manual click and does not change webhooks. It reads one
+update batch without an offset and compares its normalized facts with the shared
+normalizer. It does not advance the update queue. Its two
+draft tests need a positive private chat ID; they are skipped for other chat IDs.
+Messages are deleted after each test by default. Set
+`TELEGRAM_PUBLIC_API_KEEP_MESSAGES=true` to keep them for Desktop inspection.
+The output shows a run ID that also appears in the messages.
+
+Set `TELEGRAM_TEST_FORUM_CHAT_ID` to a forum supergroup for the public API suite's
+successful topic creation test. Without it, that test is skipped. A separate test
+checks rejection of an invalid destination. The bot needs topic rights. Created
+test topics remain in the forum; messages are deleted by default.
+The existing Action suite checks rejection in the default chat when no forum
+chat is configured, or successful topic creation when a forum chat is configured.
+Fixtures are local; the suite does not use external fixture URLs.
+
+To leave a visible Action and Flow proof in Desktop:
+
+```sh
+MIX_ENV=test RUN_LIVE_TELEGRAM_TESTS=true \
+  mix run examples/live_proof.exs
+```
+
+Bridge subscription records belong in Jido Messaging. The legacy Ingress,
+Extensions, FileInfo, MediaMessage, option structs, and keyboard structs are removed.
+The adapter exposes only native callbacks. Use Actions for provider operations.
+GetFile and DownloadFile share one validated file resolver. SendFile and provider
+media Actions share the same source schema and upload implementation.
+
+```elixir
+# Content belongs in the request Signal, including buttons:
+"keyboard" => %{"rows" => [[%{"text" => "Confirm", "value" => "confirm:1"}]]}
+# Remove buttons with an EditMessage request:
+"keyboard" => %{"rows" => []}
+```
+
+Put a webhook secret in `Client.credentials.secret_token`. SetWebhook sends it
+privately. `Jido.Chat.Telegram.Webhook.verify(client, headers)` checks that secret
+without I/O. The host owns HTTP responses, polling loops, offsets, and retries.
+
+The shared Action, Flow, Router, and Dispatch proof is in the core package at
+`integration/stateless`. See the core `guides/static_sdk.md` for the full API.
+
+All core Actions now have their own Completed and Failed Signals, matching the
+Telegram extension convention. Result operation fields contain the full request
+type. Telegram supports 12 core Actions, including CreateThread with room_id and
+name, and DownloadFile with resource_ref. Old OpenThread, FetchMedia, Stream,
+and generic OperationCompleted/OperationFailed APIs are removed.
+
+Configured discovery uses `Jido.Chat.actions(client)`, `operations(client)`,
+`signal_definitions(client)`, `event_definitions(client)`, and `catalog(client)`.
+Telegram adds 14 Actions to the 23 core Actions. Its configured catalog contains
+128 Signal definitions. The old `command_routes/0` is removed. `GetWebhookInfo`
+uses the query type `jido.chat.telegram.query.get_webhook_info`.
+
+Agent Action JSON schemas include the full request envelope and typed data.
+Serialized input at `%{"signal" => envelope}` is decoded before execution. Secrets
+and streaming sources stay in private context. Failures retain only safe codes,
+outcomes, and optional `retry_after_ms`; raw Telegram errors are not exposed.
+A partial stream failure or execution deadline has an unknown provider outcome.
+
+`OpenDm` verifies an existing private destination with `getChat`. It does not
+create access to a user who has not opened a bot conversation. Incoming forum
+service updates produce `ThreadStarted` and `ThreadChanged` facts. FetchUpdates
+and webhook normalization use the same path; the host owns repeated reads and
+offset storage. FetchMessages remains unsupported for Telegram chat history.
+
+## Receive-only source
+
+`Jido.Chat.Telegram.Source` implements `Jido.Chat.Sensor.Source`. Use it with
+`Jido.Chat.Sensor` in `Jido.Chat.Plugin`, or supply a Signal Dispatch target
+directly. It reads messages, edits, reactions, and button callbacks through
+`FetchUpdates`. It does not send replies or answer callbacks. See the
+[Agent guide](../jido_chat/guides/agent_plugin.md).
+
+The Agent declaration needs only the provider source and its Signal pattern:
+
+```elixir
+source Jido.Chat.Telegram.Source, emit: "jido.chat.message.received"
+```
+
+The Plugin starts the shared Sensor. `Telegram.Source.mode/0` returns `:poll`.
+The source owns the 1,000 ms polling default. Optional source
+`options: [interval: 2_000]` changes this delay.

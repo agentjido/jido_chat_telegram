@@ -1,11 +1,11 @@
 defmodule Jido.Chat.Telegram.NormalizerTest do
   use ExUnit.Case, async: true
-  alias Jido.Chat.{Delivery, Resources, WebhookRequest}
+  alias Jido.Chat.Delivery
   alias Jido.Chat.Signal.Identity
   alias Jido.Chat.Telegram.Adapter
 
   setup do
-    {:ok, binding} = Jido.Chat.bind(Adapter, id: "normalizer", token: "fixture-token", bot_id: 99, bot_username: "bot")
+    {:ok, binding} = new_client(Adapter, id: "normalizer", token: "fixture-token", bot_id: 99, bot_username: "bot")
     %{binding: binding}
   end
 
@@ -25,7 +25,7 @@ defmodule Jido.Chat.Telegram.NormalizerTest do
   defp update(id \\ 10, extra \\ %{}), do: Map.merge(%{"update_id" => id, "message" => message()}, extra)
 
   defp normalized(binding, input) do
-    assert {:ok, %Delivery{} = delivery} = Jido.Chat.normalize_event(binding, input)
+    assert {:ok, %Delivery{} = delivery} = Jido.Chat.normalize(binding, input)
     catalog = Jido.Signal.Catalog.new!(Jido.Chat.signal_definitions())
 
     for signal <- delivery.signals do
@@ -47,7 +47,7 @@ defmodule Jido.Chat.Telegram.NormalizerTest do
   end
 
   test "webhook and polling share item identity without sharing a batch identity", %{binding: binding} do
-    single = normalized(binding, WebhookRequest.new(%{adapter_name: :telegram, payload: update(), headers: %{}}))
+    single = normalized(binding, update())
     batch = normalized(binding, [update()])
     assert single.id != batch.id
     assert hd(single.signals).data["item_id"] == hd(batch.signals).data["item_id"]
@@ -108,26 +108,6 @@ defmodule Jido.Chat.Telegram.NormalizerTest do
     assert fact.data["mentioned"]
     assert fact.data["mentions"] == ["@bot"]
     assert fact.data["mention_details"] == [%{"id" => "@bot", "username" => "@bot", "offset" => 3, "length" => 4}]
-  end
-
-  test "media pointers remain private and retain all selected media items", %{binding: binding} do
-    payload =
-      update(10, %{
-        "message" =>
-          message(%{
-            "text" => "",
-            "caption" => "caption",
-            "photo" => [%{"file_id" => "small"}, %{"file_id" => "large"}],
-            "voice" => %{"file_id" => "voice", "mime_type" => "audio/ogg"},
-            "document" => %{"file_id" => "document", "file_name" => "report.pdf", "mime_type" => "application/pdf"}
-          })
-      })
-
-    [fact] = normalized(binding, payload).signals
-    assert Enum.map(fact.data["media"], & &1["kind"]) == ["image", "audio", "file"]
-    assert hd(fact.data["media"])["media_type"] == "image/jpeg"
-    assert {:ok, %{url: "telegram://file/large"}} = Resources.resolve(binding, hd(fact.data["media"])["resource_ref"])
-    refute Jason.encode!(fact.data) =~ "telegram://file"
   end
 
   test "membership keeps restricted is_member and item identity across both transports", %{binding: binding} do
@@ -202,6 +182,28 @@ defmodule Jido.Chat.Telegram.NormalizerTest do
     refute Jason.encode!(fact.data) =~ "private-token"
   end
 
+  test "media facts preserve dimensions, duration, and false sticker flags from ExGram structs", %{binding: binding} do
+    for kind <- ["message", "edited_message"] do
+      note = %ExGram.Model.VideoNote{file_id: "note", length: 240, duration: 1}
+
+      raw = %ExGram.Model.Message{
+        message_id: 7,
+        chat: %ExGram.Model.Chat{id: -123, type: "supergroup"},
+        from: %ExGram.Model.User{id: 42, is_bot: false, first_name: "Peer"},
+        video_note: note
+      }
+
+      [fact] = normalized(binding, %{"update_id" => 10, kind => raw}).signals
+      assert fact.type == if(kind == "message", do: "jido.chat.message.received", else: "jido.chat.message.updated")
+      assert [%{"width" => 240, "height" => 240, "duration" => 1, "media_type" => "video/mp4"}] = fact.data["media"]
+    end
+
+    sticker = %ExGram.Model.Sticker{file_id: "sticker", width: 512, height: 512, is_animated: false, is_video: false}
+    [fact] = normalized(binding, update(10, %{"message" => message(%{"sticker" => sticker})})).signals
+    assert [media] = fact.data["media"]
+    assert media["metadata"] == %{"telegram" => %{"is_animated" => false, "is_video" => false}}
+  end
+
   test "malformed items produce registered failures between valid messages", %{binding: binding} do
     facts = normalized(binding, [update(1), %{"update_id" => 2, "message" => %{}}, update(3)]).signals
 
@@ -230,48 +232,8 @@ defmodule Jido.Chat.Telegram.NormalizerTest do
           {Enum.map(1..6, &update(&1, %{"message" => message(%{"text" => String.duplicate("x", 200_000)})})),
            :delivery_too_large}
         ] do
-      assert {:error, %Jido.Chat.Errors.Contract{code: ^code}} = Jido.Chat.normalize_event(binding, input)
+      assert {:error, %Jido.Chat.Errors.Contract{code: ^code}} = Jido.Chat.normalize(binding, input)
     end
-  end
-
-  test "invalid media projection cancels resources instead of leaving active private values", %{binding: binding} do
-    payload = update(10, %{"message" => message(%{"photo" => [%{"file_id" => "file", "file_name" => self()}]})})
-    [failure] = normalized(binding, payload).signals
-    assert failure.type == "jido.chat.normalization.failed"
-
-    assert [{{:resource, _}, _, "media", nil, _, :cancelled}] = :ets.tab2list(binding.resources)
-  end
-
-  test "private media retains provider dimensions and metadata while the Signal keeps a reference", %{binding: binding} do
-    attachment = %{
-      "file_id" => "animation",
-      "file_unique_id" => "unique",
-      "file_name" => "movie.mp4",
-      "mime_type" => " video/mp4 ",
-      "width" => 640,
-      "height" => 360,
-      "duration" => 4,
-      "file_size" => 4096
-    }
-
-    [fact] =
-      normalized(binding, update(10, %{"message" => message(%{"animation" => attachment, "document" => attachment})})).signals
-
-    assert [media] = fact.data["media"]
-    assert media["kind"] == "video"
-    assert media["media_type"] == "video/mp4"
-
-    assert {:ok,
-            %{
-              width: 640,
-              height: 360,
-              duration: 4,
-              size_bytes: 4096,
-              metadata: %{telegram: %{file_unique_id: "unique"}}
-            }} = Resources.resolve(binding, media["resource_ref"])
-
-    refute Map.has_key?(media, "width")
-    refute Map.has_key?(media, "metadata")
   end
 
   test "blank or non-string photo MIME values retain the JPEG provider fallback", %{binding: binding} do
@@ -291,5 +253,18 @@ defmodule Jido.Chat.Telegram.NormalizerTest do
     [fact] = normalized(binding, %{"update_id" => 10, "channel_post" => channel}).signals
     assert fact.data["sender"]["id"] == "-123"
     assert fact.data["conversation_kind"] == "channel"
+  end
+
+  defp new_client(adapter, opts) do
+    Jido.Chat.Client.new(adapter,
+      id: opts[:id],
+      credentials: opts |> Keyword.take([:token, :secret_token, :signing_secret]) |> Map.new(),
+      transport: opts[:transport] || adapter_transport(adapter),
+      config: Keyword.drop(opts, [:id, :token, :secret_token, :signing_secret, :transport])
+    )
+  end
+
+  defp adapter_transport(adapter) do
+    if function_exported?(adapter, :default_transport, 0), do: adapter.default_transport(), else: nil
   end
 end
