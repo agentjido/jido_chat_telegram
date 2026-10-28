@@ -2,6 +2,7 @@ defmodule Jido.Chat.Telegram.MixProject do
   use Mix.Project
 
   @version "3.0.0-dev"
+  @jido_chat_ref "7d84263d017ee0b15e050312922d8a60d5f6fabc"
   @source_url "https://github.com/agentjido/jido_chat_telegram"
   @description "Telegram adapter package for Jido.Chat"
 
@@ -28,7 +29,7 @@ defmodule Jido.Chat.Telegram.MixProject do
       dialyzer: [
         plt_local_path: "priv/plts/project.plt",
         plt_core_path: "priv/plts/core.plt",
-        plt_add_apps: [:mix]
+        plt_add_apps: [:mix, :jido, :ex_unit]
       ]
     ]
   end
@@ -56,12 +57,25 @@ defmodule Jido.Chat.Telegram.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
+  defp chat_dependency do
+    case {Mix.env(), System.get_env("JIDO_CHAT_PATH")} do
+      {env, path} when env in [:dev, :test] and is_binary(path) and path != "" ->
+        {:jido_chat, path: Path.expand(path, __DIR__), override: true}
+
+      {env, _path} when env in [:dev, :test] ->
+        {:jido_chat, github: "agentjido/jido_chat", ref: @jido_chat_ref, override: true}
+
+      _ ->
+        {:jido_chat, "~> 3.0.0-dev"}
+    end
+  end
+
   defp deps do
     [
       # Runtime dependencies
       {:ex_gram, "~> 0.69"},
       {:jason, "~> 1.4"},
-      {:jido_chat, "~> 3.0.0-dev"},
+      chat_dependency(),
       {:req, "~> 0.7.1"},
 
       # Development and test dependencies

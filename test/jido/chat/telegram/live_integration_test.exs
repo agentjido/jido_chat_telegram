@@ -6,6 +6,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
   alias Jido.Chat.Telegram.Adapter
 
   @run_live System.get_env("RUN_LIVE_TELEGRAM_TESTS") in ["1", "true", "TRUE", "yes", "on"]
+  @run_live_ui System.get_env("RUN_LIVE_TELEGRAM_UI_TESTS") in ["1", "true", "TRUE", "yes", "on"]
   @token System.get_env("TELEGRAM_BOT_TOKEN")
   @chat_id System.get_env("TELEGRAM_TEST_CHAT_ID")
   @forum_chat_id System.get_env("TELEGRAM_TEST_FORUM_CHAT_ID")
@@ -123,7 +124,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
     assert_receive {:telegram_response, "sendRichMessageDraft", first, {:ok, true}}
     assert_receive {:telegram_response, "sendRichMessageDraft", second, {:ok, true}}
     assert first["draft_id"] == second["draft_id"]
-    assert first["rich_message"] == %{"markdown" => "**Jido stream_text**"}
+    assert first["rich_message"] == %{"markdown" => "**Jido stream\\_text**"}
     assert_receive {:telegram_response, "sendRichMessage", final, {:ok, raw}}
     assert final["rich_message"] == %{"markdown" => Enum.join(chunks)}
     assert field(raw, "rich_message")
@@ -185,13 +186,16 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       command(ctx, Jido.Chat.SendMessage, %{"room_id" => ctx.room_id, "text" => "Jido draft complete #{ctx.nonce}"})
 
     assert {:ok, %{first: a, second: b, signal: sent}} =
-             Jido.Exec.run(DraftFlow, %{first: first, second: second, finish: finish}, %{client: ctx.client},
+             Jido.Exec.run(
+               DraftFlow,
+               %{first: first.data, second: second.data, finish: finish.data},
+               %{client: ctx.client},
                max_attempts: 1
              )
 
-    assert a.data["result"]["acknowledged"]
-    assert b.data["result"]["draft_id"] == draft_id
-    cleanup(ctx, sent.data["result"]["id"])
+    assert a["result"]["acknowledged"]
+    assert b["result"]["draft_id"] == draft_id
+    cleanup(ctx, sent["result"]["id"])
   end
 
   test "rich send, reply, edit, and finite stream use the Signal boundary", ctx do
@@ -351,8 +355,12 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       Jido.Signal.Router.new!([{Telegram.Signal.SendPoll, Jido.Instruction.template(:action, Telegram.SendPoll)}])
 
     assert {:ok, [template]} = Jido.Signal.Router.route(router, request)
-    assert {:ok, instruction} = Jido.Instruction.bind(template, %{signal: request}, %{client: ctx.client})
-    assert {:ok, %{signal: completed}} = Jido.Exec.run(instruction)
+
+    assert {:ok, instruction} =
+             Jido.Instruction.bind(template, request.data, %{client: ctx.client, signal: request})
+
+    assert {:ok, result} = Jido.Exec.run(instruction)
+    assert {:ok, completed} = Telegram.SendPoll.reply(request, result, source: ctx.client.source)
     assert completed.type == Telegram.SendPoll.Completed.type()
     assert is_binary(completed.data["result"]["poll_id"])
     cleanup(ctx, completed.data["result"]["id"])
@@ -399,6 +407,10 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
       assert failed.data["outcome"] == "rejected"
       assert_round_trip(failed, Jido.Chat.CreateThread)
     end
+  end
+
+  if not @run_live_ui do
+    @tag skip: "set RUN_LIVE_TELEGRAM_UI_TESTS=true for the manual Desktop callback test"
   end
 
   test "fresh Desktop callback becomes a Signal and is answered by an Action", ctx do

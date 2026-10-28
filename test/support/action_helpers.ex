@@ -1,6 +1,8 @@
 defmodule Jido.Chat.Telegram.ActionHelpers do
   @moduledoc false
 
+  @doc "Executes a test Action and returns its Signal reply."
+  @spec execute(module(), term(), map(), keyword()) :: term()
   def execute(action, request, context, opts \\ [])
 
   def execute(action, %Jido.Signal{} = request, context, opts) do
@@ -12,6 +14,8 @@ defmodule Jido.Chat.Telegram.ActionHelpers do
 
   def execute(action, _request, context, opts), do: Jido.Exec.run(action, nil, context, opts)
 
+  @doc "Builds a test Signal reply for an Action result."
+  @spec reply(module(), Jido.Signal.t(), map(), map()) :: term()
   def reply(action, request, data, context) do
     subject =
       request.subject ||
