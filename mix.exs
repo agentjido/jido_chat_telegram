@@ -2,7 +2,7 @@ defmodule Jido.Chat.Telegram.MixProject do
   use Mix.Project
 
   @version "3.0.0-dev"
-  @jido_chat_ref "7d84263d017ee0b15e050312922d8a60d5f6fabc"
+  @jido_chat_ref "0b6f16d9b91b37c61f2ad913dcdd4adea1713f88"
   @source_url "https://github.com/agentjido/jido_chat_telegram"
   @description "Telegram adapter package for Jido.Chat"
 
