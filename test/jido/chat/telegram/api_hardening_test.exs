@@ -165,7 +165,7 @@ defmodule Jido.Chat.Telegram.APIHardeningTest do
 
     for {definition, action} <- Telegram.operations() do
       assert {definition, action} in Chat.operations(client())
-      schema = action.authoring_contract()["input_schema"]
+      schema = action.to_json()["input_schema"]
       assert action.type() == definition.type()
       assert action.schema() == definition.schema()
       assert schema["type"] == "object"
