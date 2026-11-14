@@ -263,7 +263,7 @@ defmodule Jido.Chat.Telegram.Operations do
          {:ok, delivery} <- Jido.Chat.normalize(client, updates) do
       signals =
         Enum.map(delivery.signals, fn signal ->
-          {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+          {:ok, json} = Jido.Signal.Codec.serialize(signal)
           Jason.decode!(json)
         end)
 

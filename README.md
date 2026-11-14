@@ -69,7 +69,7 @@ photo = Jido.Chat.Signal.Policy.new!(Jido.Chat.Telegram.Signal.SendPhoto, %{
 ref = uploaded.data["result"]["resource_ref"]
 # %{"client_id" => client.id, "kind" => "media", "id" => "telegram://file/..."}
 
-{:ok, json} = Jido.Signal.Serialization.serialize(uploaded)
+{:ok, json} = Jido.Signal.Codec.serialize(uploaded)
 {:ok, ^uploaded} = Jido.Signal.Catalog.decode(catalog, json)
 ```
 

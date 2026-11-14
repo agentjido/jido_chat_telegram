@@ -330,7 +330,7 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert downloaded.data["result"]["content_base64"] == Base.encode64("{}")
     assert_receive {:wire, "getFile", %{"file_id" => "file-1"}, _}
     assert_receive {:wire, "downloadFile", %{"file_path" => "documents/test.json"}, _}
-    assert {:ok, json} = Jido.Signal.Serialization.serialize(downloaded)
+    assert {:ok, json} = Jido.Signal.Codec.serialize(downloaded)
     refute json =~ "private-token"
     refute json =~ "/bot"
   end
@@ -381,7 +381,7 @@ defmodule Jido.Chat.Telegram.AdapterSurfaceTest do
     assert_receive {:wire, "getWebhookInfo", %{}, _}
     assert {:ok, _} = run(Telegram.DeleteWebhook, %{"drop_pending_updates" => false})
     assert_receive {:wire, "deleteWebhook", %{"drop_pending_updates" => false}, _}
-    assert {:ok, json} = Jido.Signal.Serialization.serialize(set)
+    assert {:ok, json} = Jido.Signal.Codec.serialize(set)
     refute json =~ "private-secret"
     refute_receive {:wire, _, _, _}
   end

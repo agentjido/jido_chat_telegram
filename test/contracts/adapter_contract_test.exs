@@ -230,7 +230,7 @@ defmodule Jido.Chat.Telegram.AdapterContractTest do
 
       for {signal, fixture} <- Enum.zip(delivery.signals, expected) do
         assert signal.type == fixture["type"]
-        assert %Jido.Signal.Trace{} = Jido.Signal.Trace.get(signal)
+        assert %Jido.Trace{} = Jido.Signal.Context.get_trace(signal)
         assert signal.source == client.source
         assert signal.data["delivery_id"] == delivery.id
         assert signal.data["item_id"] == "telegram:update:#{fixture["update_id"]}:#{fixture["item_suffix"]}"

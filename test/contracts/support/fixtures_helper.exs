@@ -72,7 +72,7 @@ defmodule Jido.Chat.Telegram.ContractFixtures do
   end
 
   def round_trip(signal, catalog \\ Telegram.catalog()) do
-    assert {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+    assert {:ok, json} = Jido.Signal.Codec.serialize(signal)
     refute json =~ "fixture-token:"
     refute json =~ "fixture-secret:"
     refute json =~ "never-project-this"

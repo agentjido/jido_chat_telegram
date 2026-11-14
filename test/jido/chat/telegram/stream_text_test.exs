@@ -267,7 +267,7 @@ defmodule Jido.Chat.Telegram.StreamTextTest do
     assert {:ok, completed} = Jido.Chat.StreamText.reply(request, data, source: client().source)
 
     assert completed.extensions["jidocausationid"] == request.id
-    assert {:ok, json} = Jido.Signal.Serialization.serialize(completed)
+    assert {:ok, json} = Jido.Signal.Codec.serialize(completed)
     assert {:ok, ^completed} = Jido.Signal.Catalog.decode(Jido.Chat.Telegram.catalog(), json)
     refute json =~ "private-token"
     assert [{"sendMessageDraft", _, _}, {"sendMessage", _, _}] = calls()

@@ -45,6 +45,6 @@ source = %{
 IO.puts("send_file: #{uploaded.data["result"]["id"]}; run #{run_id}")
 
 for signal <- [sent, streamed, edited, uploaded] do
-  {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+  {:ok, json} = Jido.Signal.Codec.serialize(signal)
   {:ok, ^signal} = Jido.Signal.Catalog.decode(Jido.Chat.Telegram.catalog(), json)
 end

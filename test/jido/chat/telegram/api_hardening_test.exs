@@ -107,7 +107,7 @@ defmodule Jido.Chat.Telegram.APIHardeningTest do
       assert failed.data["outcome"] == "rejected"
       assert failed.data["retry_after_ms"] == 3000
       assert_receive {:wire, "getMe", %{}}
-      {:ok, wire} = Jido.Signal.Serialization.serialize(failed)
+      {:ok, wire} = Jido.Signal.Codec.serialize(failed)
       refute wire =~ "private"
       assert {:ok, ^failed} = Jido.Signal.Catalog.decode(Telegram.catalog(), wire)
     end

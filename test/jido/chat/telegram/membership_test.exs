@@ -71,7 +71,7 @@ defmodule Jido.Chat.Telegram.MembershipTest do
       assert signal.source == context.binding.source
       assert signal.subject == Identity.conversation_subject(context.binding.id, "-123")
       catalog = Jido.Signal.Catalog.new!(Jido.Chat.signal_definitions())
-      assert {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+      assert {:ok, json} = Jido.Signal.Codec.serialize(signal)
       assert {:ok, ^signal} = Jido.Signal.Catalog.decode(catalog, json)
     end
   end

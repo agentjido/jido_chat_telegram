@@ -315,7 +315,7 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
       for bad <- [
             Map.put(data, "token", "never-project-this"),
             Map.put(data, "request_id", 42),
-            %{"signal" => Jido.Signal.to_map(request)}
+            %{"signal" => Jido.Signal.Codec.to_map(request)}
           ] do
         assert {:error, _} = Jido.Exec.run(action, bad, %{client: client, signal: request}, max_attempts: 1)
       end

@@ -48,7 +48,7 @@ defmodule Jido.Chat.Telegram.Source do
       )
 
     data = if is_nil(cursor), do: data, else: Map.put(data, "offset", cursor)
-    data = Map.merge(data, %{"client_id" => client.id, "request_id" => Jido.Signal.ID.generate!()})
+    data = Map.merge(data, %{"client_id" => client.id, "request_id" => Jido.Id.uuid7()})
 
     with {:ok, request} <- Jido.Chat.Signal.Policy.new(Jido.Chat.Telegram.Signal.FetchUpdates, data),
          {:ok, completed} <- Jido.Chat.execute(client, request, timeout: (data["timeout"] + 5) * 1_000),

@@ -64,7 +64,7 @@ defmodule Jido.Chat.Telegram.SendPollTest do
       assert completed.type == SendPoll.Completed.type()
       assert completed.data["result"] == %{"id" => "42", "room_id" => "123", "poll_id" => "poll-1"}
       catalog = Jido.Signal.Catalog.new!(Jido.Chat.signal_definitions() ++ SendPoll.signal_definitions())
-      assert {:ok, json} = Jido.Signal.Serialization.serialize(completed)
+      assert {:ok, json} = Jido.Signal.Codec.serialize(completed)
       assert {:ok, ^completed} = Jido.Signal.Catalog.decode(catalog, json)
       refute json =~ "private-token"
     end

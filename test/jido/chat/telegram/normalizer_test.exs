@@ -30,7 +30,7 @@ defmodule Jido.Chat.Telegram.NormalizerTest do
 
     for signal <- delivery.signals do
       assert signal.source == binding.source
-      assert {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+      assert {:ok, json} = Jido.Signal.Codec.serialize(signal)
       assert {:ok, ^signal} = Jido.Signal.Catalog.decode(catalog, json)
       refute Map.has_key?(signal.data, "raw")
     end

@@ -515,7 +515,7 @@ defmodule Jido.Chat.Telegram.LiveIntegrationTest do
 
   defp assert_round_trip(signal, action) do
     catalog = Jido.Signal.Catalog.new!(Enum.uniq(Jido.Chat.signal_definitions() ++ action.signal_definitions()))
-    assert {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+    assert {:ok, json} = Jido.Signal.Codec.serialize(signal)
     assert {:ok, ^signal} = Jido.Signal.Catalog.decode(catalog, json)
     refute json =~ to_string(@token)
   end

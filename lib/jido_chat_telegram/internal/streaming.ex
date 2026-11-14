@@ -141,7 +141,7 @@ defmodule Jido.Chat.Telegram.Streaming do
   end
 
   defp action(state, action, data) do
-    data = Map.merge(data, %{"client_id" => state.client.id, "request_id" => Jido.Signal.ID.generate!()})
+    data = Map.merge(data, %{"client_id" => state.client.id, "request_id" => Jido.Id.uuid7()})
 
     with {:ok, signal} <-
            Jido.Chat.Signal.Policy.reply(action.signal_definition(), data, state.request, source: state.client.source),

@@ -78,7 +78,7 @@ defmodule Jido.Chat.Telegram.SignalsContractTest do
 
       for catalog <- catalogs do
         assert F.round_trip(signal, catalog) == signal
-        wire = Jido.Signal.to_map(signal)
+        wire = Jido.Signal.Codec.to_map(signal)
         assert {:error, _} = Jido.Signal.Catalog.decode(catalog, Map.put(wire, "type", "jido.chat.telegram.unknown"))
         assert {:error, _} = Jido.Signal.Catalog.decode(catalog, Map.put(wire, "dataschema", "urn:unknown:1"))
       end
@@ -108,7 +108,7 @@ defmodule Jido.Chat.Telegram.SignalsContractTest do
         assert {:error, _} = Jido.Chat.Telegram.ActionHelpers.execute(action, bad, %{client: client}, max_attempts: 1)
 
         assert {:error, _} =
-                 Jido.Exec.run(action, %{"signal" => Jido.Signal.to_map(bad)}, %{client: client}, max_attempts: 1)
+                 Jido.Exec.run(action, %{"signal" => Jido.Signal.Codec.to_map(bad)}, %{client: client}, max_attempts: 1)
       end
     end
 
@@ -243,10 +243,10 @@ defmodule Jido.Chat.Telegram.SignalsContractTest do
     client = F.client()
     request = F.request(Telegram.SendDraft, client, %{"text" => "x"})
     request = %{request | id: "fixed-size", time: "2026-10-18T12:00:00Z"}
-    assert {:ok, json} = Jido.Signal.Serialization.serialize(request)
+    assert {:ok, json} = Jido.Signal.Codec.serialize(request)
     fill = 262_144 - byte_size(json) + 1
     maximum = %{request | data: Map.put(request.data, "text", String.duplicate("x", fill))}
-    assert {:ok, json} = Jido.Signal.Serialization.serialize(maximum)
+    assert {:ok, json} = Jido.Signal.Codec.serialize(maximum)
     assert byte_size(json) == 262_144
 
     assert {:ok, %{signal: completed}} =

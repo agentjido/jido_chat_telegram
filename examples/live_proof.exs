@@ -83,7 +83,7 @@ poll =
     %{client: client}, max_attempts: 1)
 
 for {step, signal} <- outputs do
-  {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+  {:ok, json} = Jido.Signal.Codec.serialize(signal)
   {:ok, ^signal} = Jido.Signal.Catalog.decode(Telegram.catalog(), json)
   IO.puts("#{step}: #{signal.type}; message #{signal.data["result"]["id"]}")
 end

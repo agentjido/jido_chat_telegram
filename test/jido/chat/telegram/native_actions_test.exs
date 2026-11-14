@@ -204,7 +204,7 @@ defmodule Jido.Chat.Telegram.NativeActionsTest do
              execute(Telegram.GetMe, %{}, response: {:ok, %ExGram.Model.User{id: 42, is_bot: false}})
 
     assert completed.data["result"]["is_bot"] == false
-    assert {:ok, json} = Jido.Signal.Serialization.serialize(completed)
+    assert {:ok, json} = Jido.Signal.Codec.serialize(completed)
     assert {:ok, ^completed} = Jido.Signal.Catalog.decode(catalog, json)
   end
 
@@ -241,7 +241,7 @@ defmodule Jido.Chat.Telegram.NativeActionsTest do
 
   defp assert_round_trip(action, signal) do
     catalog = Jido.Signal.Catalog.new!(Jido.Chat.signal_definitions() ++ action.signal_definitions())
-    assert {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+    assert {:ok, json} = Jido.Signal.Codec.serialize(signal)
     assert {:ok, ^signal} = Jido.Signal.Catalog.decode(catalog, json)
     refute json =~ "private-token"
   end

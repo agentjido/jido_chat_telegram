@@ -584,14 +584,14 @@ defmodule Jido.Chat.Telegram.PublicAPILiveTest do
 
     if request_id,
       do: assert(signal.data["request_id"] == request_id),
-      else: assert(Jido.Signal.ID.valid?(signal.data["request_id"]))
+      else: assert(Jido.Id.uuid7?(signal.data["request_id"]))
 
     assert_round_trip(signal)
     signal.data["result"]
   end
 
   defp assert_round_trip(signal) do
-    assert {:ok, json} = Jido.Signal.Serialization.serialize(signal)
+    assert {:ok, json} = Jido.Signal.Codec.serialize(signal)
     assert {:ok, ^signal} = Jido.Signal.Catalog.decode(Jido.Chat.Telegram.catalog(), json)
     refute json =~ to_string(@token)
   end
