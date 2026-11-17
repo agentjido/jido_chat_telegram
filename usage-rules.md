@@ -9,5 +9,5 @@ contract.
 - Use flat Telegram Actions and native request/result Signals for Telegram-only operations.
 - Keep live API tests tagged `:live` and excluded by default.
 - Do not commit `.env` or token values.
-- Preserve the adapter boundary; runtime supervision belongs in `jido_messaging`.
+- Preserve the adapter boundary; managed runtime supervision belongs in Jido Chat core.
 - Run `mix test`, `mix quality`, and `mix coveralls` before release work.

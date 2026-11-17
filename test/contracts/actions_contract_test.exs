@@ -35,6 +35,9 @@ defmodule Jido.Chat.Telegram.ActionsContractTest do
       assert method == row["method"]
       assert payload == F.scope(row["payload"], client)
       assert private[:local_setting] == "private-transport-option"
+      assert private[:observer] == self()
+      refute Keyword.has_key?(private, :token)
+      refute Keyword.has_key?(private, :secret_token)
       assert client == before
 
       expected = F.scope(row["result"], client)

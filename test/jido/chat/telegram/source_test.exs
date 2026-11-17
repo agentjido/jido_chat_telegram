@@ -62,6 +62,7 @@ defmodule Jido.Chat.Telegram.SourceTest do
     refute key == c.credentials.token
     assert Source.key(%{c | id: "other"}, []) == key
     assert Source.key(%{c | credentials: %{}}, []) == nil
+    assert Source.key(%{c | credentials: %{token: ""}}, []) == nil
   end
 
   test "the generic Sensor delivers Telegram facts to a PID without a Jido Agent" do

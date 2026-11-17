@@ -254,7 +254,7 @@ defmodule Jido.Chat.Telegram.Normalizer do
         "room_id" => room,
         "participant_id" => peer,
         "actor_id" => message |> field("from") |> field("id") |> identifier(),
-        "bot_self" => peer == identifier(Client.options(context.client)[:bot_id]),
+        "bot_self" => peer == identifier(context.client.config[:bot_id]),
         "transition" => transition,
         "evidence" => evidence,
         "previous" => nil,
@@ -420,7 +420,7 @@ defmodule Jido.Chat.Telegram.Normalizer do
         end
       end)
 
-    bot = Client.options(client)[:bot_username]
+    bot = client.config[:bot_username]
 
     %{
       "mention_details" => details,
@@ -428,7 +428,7 @@ defmodule Jido.Chat.Telegram.Normalizer do
       "mentioned" =>
         Enum.any?(
           details,
-          &(&1["id"] == identifier(Client.options(client)[:bot_id]) or
+          &(&1["id"] == identifier(client.config[:bot_id]) or
               (is_binary(bot) and &1["username"] in [bot, "@" <> bot]))
         )
     }
@@ -466,7 +466,7 @@ defmodule Jido.Chat.Telegram.Normalizer do
       "username" => field(user, "username"),
       "display_name" => if(name != "", do: name, else: field(user, "title")),
       "is_bot" => field(user, "is_bot") == true,
-      "is_self" => id == identifier(Client.options(client)[:bot_id])
+      "is_self" => id == identifier(client.config[:bot_id])
     }
     |> select_present()
   end

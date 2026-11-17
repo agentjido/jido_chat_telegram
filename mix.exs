@@ -2,7 +2,6 @@ defmodule Jido.Chat.Telegram.MixProject do
   use Mix.Project
 
   @version "3.0.0-dev"
-  @jido_chat_ref "7652b6d74c4fc8170149ae1cfd08f981cfb1ea27"
   @source_url "https://github.com/agentjido/jido_chat_telegram"
   @description "Telegram adapter package for Jido.Chat"
 
@@ -58,7 +57,7 @@ defmodule Jido.Chat.Telegram.MixProject do
   defp elixirc_paths(_), do: ["lib"]
 
   defp chat_dependency do
-    {:jido_chat, github: "agentjido/jido_chat", ref: @jido_chat_ref}
+    {:jido_chat, path: "../jido_chat"}
   end
 
   defp deps do

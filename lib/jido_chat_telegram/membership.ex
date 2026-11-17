@@ -33,7 +33,7 @@ defmodule Jido.Chat.Telegram.Membership do
         "room_id" => room,
         "participant_id" => participant,
         "actor_id" => update |> field("from") |> field("id") |> id(),
-        "bot_self" => kind == "my_chat_member" or participant == id(Keyword.get(Client.options(client), :bot_id)),
+        "bot_self" => kind == "my_chat_member" or participant == id(client.config[:bot_id]),
         "transition" => transition,
         "evidence" => evidence,
         "previous" => previous,

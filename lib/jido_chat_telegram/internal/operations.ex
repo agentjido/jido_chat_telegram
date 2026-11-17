@@ -14,7 +14,7 @@ defmodule Jido.Chat.Telegram.Operations do
   @doc false
   def invoke(operation, %Client{adapter: Adapter, credentials: %{token: token}} = client, signal, opts)
       when is_binary(token) and token != "" do
-    options = Keyword.merge(Client.options(client), opts)
+    options = Keyword.merge(client.config, opts)
 
     legacy = [
       :reply_markup,

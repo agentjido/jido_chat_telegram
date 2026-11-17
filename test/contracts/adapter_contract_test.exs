@@ -24,7 +24,9 @@ defmodule Jido.Chat.Telegram.AdapterContractTest do
       client = F.client(id)
       assert Chat.capabilities(client) == expected
       assert client.source == "urn:jido:chat:client:" <> Base.url_encode64(id, padding: false)
-      assert Chat.Client.options(client)[:token] == "fixture-token:" <> id
+      assert client.credentials.token == "fixture-token:" <> id
+      assert client.config[:bot_id] == 99
+      assert client.transport == F.Transport
       refute inspect(client) =~ "fixture-token"
       assert Enum.sort(Enum.map(Chat.event_definitions(client), &inspect/1)) == Enum.sort(manifest["events"])
       assert Enum.sort(Enum.map(Telegram.actions(), &inspect/1)) == F.cases() |> Enum.map(& &1["action"]) |> Enum.sort()
@@ -49,7 +51,7 @@ defmodule Jido.Chat.Telegram.AdapterContractTest do
     spec = Application.spec(:jido_chat_telegram)
     assert Keyword.get(spec, :mod, []) == []
     assert Keyword.get(spec, :registered, []) == []
-    refute :jido_messaging in Keyword.fetch!(spec, :applications)
+    assert :jido_chat in Keyword.fetch!(spec, :applications)
     refute :covenant in Keyword.fetch!(spec, :applications)
     refute_receive {:telegram_contract_wire, _, _, _, _, _}
   end

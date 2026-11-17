@@ -18,8 +18,8 @@ mix coveralls
 mix quality
 ```
 
-Dependencies come from Hex. Normal `mix test` also
-runs the contracts. CI runs the full suite and the contract gate. Code coverage
+The current V3 integration uses the sibling `../jido_chat` package. Normal
+`mix test` also runs the contracts. CI runs the full suite and the contract gate. Code coverage
 has a 90% minimum. Contract coverage requires a passing test for every active
 obligation. These are separate measurements.
 

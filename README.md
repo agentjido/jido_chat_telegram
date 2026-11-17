@@ -1,11 +1,10 @@
 # Jido Chat Telegram
 
-## V3 checkpoint
+## V3 local integration
 
-This branch requires the Jido v3 Chat API. All dependencies use Hex.
-`jido_chat ~> 3.0.0-dev` is not published as of 2026-10-19.
-Dependency resolution and tests remain blocked until a compatible release is available.
-The lock file retains existing Hex entries; resolve it again after publication.
+This branch requires the Jido Chat V3 API. Local development uses the sibling
+`../jido_chat` package so adapter checks run against the current V3 working
+tree. Select a released Hex constraint only as part of later publication work.
 
 Stateless Telegram provider library for the next major release of Jido Chat.
 
@@ -224,7 +223,7 @@ MIX_ENV=test RUN_LIVE_TELEGRAM_TESTS=true \
   mix run examples/live_proof.exs
 ```
 
-Bridge subscription records belong in Jido Messaging. The legacy Ingress,
+Managed bridge bindings belong in Jido Chat Runtime. The legacy Ingress,
 Extensions, FileInfo, MediaMessage, option structs, and keyboard structs are removed.
 The adapter exposes only native callbacks. Use Actions for provider operations.
 GetFile and DownloadFile share one validated file resolver. SendFile and provider
@@ -275,8 +274,8 @@ offset storage. FetchMessages remains unsupported for Telegram chat history.
 `Jido.Chat.Telegram.Source` implements `Jido.Chat.Sensor.Source`. Use it with
 `Jido.Chat.Sensor` in `Jido.Chat.Plugin`, or supply a Signal Dispatch target
 directly. It reads messages, edits, reactions, and button callbacks through
-`FetchUpdates`. It does not send replies or answer callbacks. See the
-[Agent guide](../jido_chat/guides/agent_plugin.md).
+`FetchUpdates`. It does not send replies or answer callbacks. See
+`guides/agent_plugin.md` in Jido Chat core.
 
 The Agent declaration needs only the provider source and its Signal pattern:
 

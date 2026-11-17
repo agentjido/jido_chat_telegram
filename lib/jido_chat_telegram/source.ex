@@ -27,8 +27,8 @@ defmodule Jido.Chat.Telegram.Source do
 
   @impl true
   def key(client, _options) do
-    case Keyword.get(Jido.Chat.Client.options(client), :token) do
-      token when is_binary(token) -> :crypto.hash(:sha256, token)
+    case client.credentials[:token] do
+      token when is_binary(token) and token != "" -> :crypto.hash(:sha256, token)
       _ -> nil
     end
   end

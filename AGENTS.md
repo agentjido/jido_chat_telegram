@@ -16,7 +16,7 @@
 - Keep live Telegram tests excluded by default with the `:live` tag.
 - Do not commit `.env` or credentials.
 - Use `Jido.Chat.Adapter` callbacks for shared behavior and flat Telegram Actions with native Signals for Telegram-only APIs.
-- Preserve the adapter boundary; supervised runtime concerns belong in `jido_messaging`.
+- Preserve the adapter boundary; managed runtime concerns belong in Jido Chat core.
 
 ## Release Hygiene
 
